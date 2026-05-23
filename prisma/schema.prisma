@@ -1,0 +1,115 @@
+// SSA data model — PRD §8 (v1.2). Seven tables; sequence state lives in Draft history.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector]
+}
+
+model Lead {
+  id               String   @id @default(cuid())
+  source           String
+  name             String
+  nameNormalized   String
+  street           String?
+  city             String
+  state            String
+  zip              String?
+  addressHash      String
+  phoneE164        String?
+  website          String?
+  googleRating     Float?
+  googleReviews    Int?
+  services         String[]
+  sourceMeta       Json
+  hubspotCompanyId String?
+  doNotContact     Boolean  @default(false)
+  enrichment       Enrichment?
+  drafts           Draft[]
+  createdAt        DateTime @default(now())
+
+  @@unique([nameNormalized, addressHash])
+  @@index([state, city])
+}
+
+model Enrichment {
+  id                String   @id @default(cuid())
+  leadId            String   @unique
+  lead              Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  ownerName         String?
+  ownerTitle        String?
+  ownerEmail        String?
+  ownerLinkedIn     String?
+  teamSizeSignal    String?
+  expectedProduct   String?
+  painPoints        Json
+  signals           Json     @default("{}")
+  legitscriptStatus String?
+  evidenceQuote     String?
+  enrichedAt        DateTime @default(now())
+}
+
+model Draft {
+  id                 String    @id @default(cuid())
+  leadId             String
+  lead               Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  kind               String
+  subject            String?
+  body               String
+  audioMp3           Bytes?
+  personalizationPct Int?
+  specificFacts      String[]
+  status             String
+  rejectReason       String?
+  approvedBy         String?
+  sentAt             DateTime?
+  gmailMessageId     String?
+  hubspotEmailId     String?
+  twilioCallSid      String?
+  createdAt          DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([leadId, kind])
+}
+
+model Suppression {
+  email     String   @default("")
+  phoneE164 String   @default("")
+  reason    String
+  createdAt DateTime @default(now())
+
+  @@id([email, phoneE164])
+}
+
+model Score {
+  id                  String   @id @default(cuid())
+  hubspotDealId       String
+  score               Int
+  expectedCommission  Int
+  reasons             String[]
+  scoredAt            DateTime @default(now())
+}
+
+model KBChunk {
+  id        String                       @id @default(cuid())
+  docPath   String
+  chunkIdx  Int
+  content   String                       @db.Text
+  embedding Unsupported("vector(1024)")?
+  metadata  Json                         @default("{}")
+
+  @@unique([docPath, chunkIdx])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String?
+  meta      Json     @default("{}")
+  createdAt DateTime @default(now())
+}
