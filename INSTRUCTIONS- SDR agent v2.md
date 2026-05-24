@@ -45,7 +45,7 @@ tsconfig.json: ES2022, moduleResolution "bundler", strict true, rootDir "src", o
 src/server.ts: minimal Express server. GET /health returns { ok: true, uptime: process.uptime(), version: "0.1.0" }. Listen on process.env.PORT || 3000.
 
 .env.example with empty values, one per line:
-DATABASE_URL, ANTHROPIC_API_KEY, VOYAGE_API_KEY, GOOGLE_MAPS_API_KEY, SERPAPI_KEY, HUBSPOT_ACCESS_TOKEN, HUBSPOT_OWNER_ID, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_FROM, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, QUEUE_PASSWORD, PUBLIC_URL, UNSUBSCRIBE_SECRET, BRIEF_RECIPIENT, SONIA_PHONE
+DATABASE_URL, ANTHROPIC_API_KEY, VOYAGE_API_KEY, GOOGLE_MAPS_API_KEY, SERPER_API_KEY, HUBSPOT_ACCESS_TOKEN, HUBSPOT_OWNER_ID, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_FROM, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, QUEUE_PASSWORD, PUBLIC_URL, UNSUBSCRIBE_SECRET, BRIEF_RECIPIENT, SONIA_PHONE
 
 README.md: 4-line stub pointing to PRD.md, INSTRUCTIONS.md, CURSOR_GUIDE.md.
 
@@ -333,8 +333,8 @@ This prompt implements the three new intelligence signals from PRD §9.3 stage 4
 
 src/shared/serpapi.ts:
 Export `serpapi(query: string, num = 5): Promise<{ link?: string; title?: string; snippet?: string }[]>`.
-GET https://serpapi.com/search.json?engine=google&q={url-encoded query}&num={num}&api_key={env}
-Return organic_results array (or [] on error). Log to AuditLog on error, return [].
+POST https://google.serper.dev/search with header `X-API-KEY: {env SERPER_API_KEY}`, header `Content-Type: application/json`, JSON body `{ q: query, num }`.
+Return `organic` array (or [] on error). Log to AuditLog on error, return []. Function/file/audit-action names kept as `serpapi` for call-site stability — see in-file migration comment.
 
 src/pipeline/signals.ts:
 Export `detectSignals(facility: { name: string; city: string }, html: string): Promise<Signals>`.
@@ -348,14 +348,14 @@ Type Signals:
 
 Implementation:
 
-A. Directory checks — 3 parallel SerpAPI calls (Promise.all):
+A. Directory checks — 3 parallel Serper calls (Promise.all):
    - serpapi(`site:psychologytoday.com "${facility.name}" ${facility.city}`)
    - serpapi(`site:rehabs.com "${facility.name}" ${facility.city}`)
    - serpapi(`site:recovery.com "${facility.name}" ${facility.city}`)
    Boolean = (results.length > 0 && first result's title/snippet contains facility.name case-insensitive).
    missingFromAll = !pt && !rc && !rec.
 
-B. Hiring activity — 1 SerpAPI call:
+B. Hiring activity — 1 Serper call:
    - serpapi(`site:linkedin.com/jobs "${facility.name}"`, 10)
    active = results.length > 0.
    roleTitles = extract titles, strip " - " and trailing company name, dedupe, max 5.
@@ -410,7 +410,7 @@ Flow:
 9. Write Enrichment row with all fields populated.
 
 src/scripts/enrichAll.ts:
-Pulls all leads where Enrichment is null. Process 5 concurrent (write a small inline concurrency helper — no new dependency). Sleep 1s between batches. Cap at 200 leads per run to control SerpAPI spend.
+Pulls all leads where Enrichment is null. Process 5 concurrent (write a small inline concurrency helper — no new dependency). Sleep 1s between batches. Cap at 200 leads per run to control Serper spend.
 
 Under 150 lines total across both files.
 
@@ -421,7 +421,7 @@ STOP.
 
 ---
 
-### Prompt 2.5 — SerpAPI LinkedIn lookup (and integrate into enrich)
+### Prompt 2.5 — Serper LinkedIn lookup (and integrate into enrich)
 
 ```
 Edit src/shared/serpapi.ts to add ONE new export, AND edit src/pipeline/enrich.ts to use it.
@@ -1507,7 +1507,7 @@ Create ONLY CHECKLIST.md at repo root with these checkbox sections:
 ## Pre-launch
 - [ ] SAMHSA API access form submitted
 - [ ] Google Places billing enabled, daily quota set to $10 cap
-- [ ] SerpAPI subscription active (Developer tier)
+- [ ] Serper subscription active (Developer tier)
 - [ ] HubSpot private app created with all required scopes
 - [ ] HubSpot custom properties created (setupHubspotCustomProperties.ts)
 - [ ] Gmail OAuth refresh token in Render env (run gmailAuth.ts locally first)
@@ -1565,11 +1565,11 @@ STOP.
 | Claude API                         | $80             |
 | Voyage AI (embeddings)             | $5              |
 | Google Places                      | $50             |
-| SerpAPI (now incl. signals checks) | $75             |
+| Serper (now incl. signals checks)  | $50             |
 | Twilio (voice + lookups)           | $30             |
 | ElevenLabs                         | $22             |
 | Mailwarm or equivalent             | $50             |
-| **Total infra+APIs**               | **~$326/month** |
+| **Total infra+APIs**               | **~$301/month** |
 
 
 Break-even at ~2 Select-tier deals/month ($240 × 2 = $480). Target 5+ deals/month by month 3.
