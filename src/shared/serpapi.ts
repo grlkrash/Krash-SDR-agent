@@ -5,7 +5,7 @@ import { z } from 'zod';
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' });
 const prisma = new PrismaClient({ adapter });
 
-const SERPAPI_URL = 'https://serpapi.com/search.json';
+const SERPER_URL = 'https://google.serper.dev/search';
 
 const OrganicResultSchema = z
   .object({
@@ -17,7 +17,7 @@ const OrganicResultSchema = z
 
 const ResponseSchema = z
   .object({
-    organic_results: z.array(OrganicResultSchema).optional(),
+    organic: z.array(OrganicResultSchema).optional(),
   })
   .passthrough();
 
@@ -34,24 +34,27 @@ const logError = async (query: string, error: string): Promise<void> => {
   });
 };
 
+// Migrated from SerpAPI to Serper for cost. Export name kept for call-site stability.
 export const serpapi = async (query: string, num = 5): Promise<SerpResult[]> => {
-  const apiKey = process.env.SERPAPI_KEY;
+  const apiKey = process.env.SERPER_API_KEY;
   if (apiKey === undefined || apiKey === '') {
-    await logError(query, 'SERPAPI_KEY is not set');
+    await logError(query, 'SERPER_API_KEY is not set');
     return [];
   }
 
-  const url = `${SERPAPI_URL}?engine=google&q=${encodeURIComponent(query)}&num=${num}&api_key=${apiKey}`;
-
   try {
-    const res = await fetch(url);
+    const res = await fetch(SERPER_URL, {
+      method: 'POST',
+      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: query, num }),
+    });
     if (!res.ok) {
       await logError(query, `HTTP ${res.status} ${res.statusText}`);
       return [];
     }
     const json: unknown = await res.json();
     const parsed = ResponseSchema.parse(json);
-    return parsed.organic_results ?? [];
+    return parsed.organic ?? [];
   } catch (err) {
     await logError(query, err instanceof Error ? err.message : String(err));
     return [];
