@@ -399,7 +399,7 @@ Flow:
 3. fetchSite(lead.website). If null:
    - Write Enrichment with painPoints: { broken_or_slow: true }, signals: { /* empty defaults */ }, expectedProduct: 'claimed'.
    - Return.
-4. Call claude.messages.create with model 'claude-sonnet-4-20250514', max_tokens 2048, temperature 0, system: WEBSITE_ANALYZER_SYSTEM, messages: [{ role: 'user', content: buildWebsiteAnalyzerUserPrompt(lead, html) }].
+4. Call claude.messages.create with model 'claude-sonnet-4-5-20250929', max_tokens 2048, temperature 0, system: WEBSITE_ANALYZER_SYSTEM, messages: [{ role: 'user', content: buildWebsiteAnalyzerUserPrompt(lead, html) }].
 5. extractJSON. On parse failure: retry once with appended "Output ONLY raw JSON, no preamble, no fences." On second failure: AuditLog 'enrich.claude.parse-failed' and return.
 6. Call detectSignals({ name: lead.name, city: lead.city }, html) → signals.
 7. Tier adjustment based on signals (PRD §9.3):
@@ -532,10 +532,10 @@ Flow:
 2. Compute targetEmail: enrichment.ownerEmail || guessEmail(enrichment.ownerName, lead.website). If null, AuditLog 'draftCold.no-email' and return null.
 3. Check Suppression { email: targetEmail }. If exists, AuditLog 'draftCold.suppressed' and return null.
 4. STAGE A — Generate:
-   - claude.messages.create with model 'claude-sonnet-4-20250514', max_tokens 1024, temperature 0.7, system: COLD_EMAIL_SYSTEM, messages: [{ role: 'user', content: buildColdEmailUser(lead, enrichment) }]
+   - claude.messages.create with model 'claude-sonnet-4-5-20250929', max_tokens 1024, temperature 0.7, system: COLD_EMAIL_SYSTEM, messages: [{ role: 'user', content: buildColdEmailUser(lead, enrichment) }]
    - extractJSON → { subject, body, specific_facts_used }
 5. STAGE B — Evaluate:
-   - claude.messages.create with model 'claude-sonnet-4-20250514', max_tokens 512, temperature 0.3, system: COLD_EMAIL_EVALUATOR_SYSTEM, messages: [{ role: 'user', content: `Email body:\n${body}\n\nProspect facts:\n${JSON.stringify({lead, enrichment}, null, 2)}` }]
+   - claude.messages.create with model 'claude-sonnet-4-5-20250929', max_tokens 512, temperature 0.3, system: COLD_EMAIL_EVALUATOR_SYSTEM, messages: [{ role: 'user', content: `Email body:\n${body}\n\nProspect facts:\n${JSON.stringify({lead, enrichment}, null, 2)}` }]
    - extractJSON → { personalization_pct }
 6. If pct < 60:
    - Retry Stage A once with appended user message: "Previous attempt scored ${pct}%. Increase prospect-specific references to ≥60%. Reference at least one intelligence signal if present (hiring, missing directories, tech stack)."
@@ -923,7 +923,7 @@ Flow:
    b. Skip messages where 'From' contains GMAIL_FROM (self-sent).
    c. Detect OOO: subject startsWith 'Out of Office' or 'Automatic reply' OR body contains 'I am out of the office' / 'currently out of the office'. If OOO: AuditLog 'reply.ooo-detected' and skip.
    d. Find matching Draft: Draft.findFirst where gmailMessageId IN (parse In-Reply-To and References — split on whitespace, strip angle brackets).
-   e. If matched: generate Draft of kind='replied' via Claude (model 'claude-sonnet-4-20250514', max_tokens 512, temperature 0.5, system: REPLIED_SYSTEM, user: buildRepliedUser(...)). Persist with status='pending'. AuditLog 'reply.draft-created'.
+   e. If matched: generate Draft of kind='replied' via Claude (model 'claude-sonnet-4-5-20250929', max_tokens 512, temperature 0.5, system: REPLIED_SYSTEM, user: buildRepliedUser(...)). Persist with status='pending'. AuditLog 'reply.draft-created'.
 
 src/scripts/checkReplies.ts:
 Cron entry. Call checkReplies. AuditLog success/failure.
@@ -1062,7 +1062,7 @@ Flow:
 1. Load lead + enrichment. Skip if !lead.phoneE164, lead.doNotContact, or Suppression { phoneE164 } exists.
 2. If existing Draft of kind='voicemail' for this lead with status NOT IN ('rejected'): return.
 3. await isLandline(lead.phoneE164). If false: Persist Draft { kind:'voicemail', body:'(skipped — mobile)', status: 'voicemail-skipped-mobile' }. AuditLog. Return.
-4. Build script via Claude: model 'claude-sonnet-4-20250514', max_tokens 200, temp 0.6, system: VOICEMAIL_SCRIPT_SYSTEM, user: buildVoicemailScriptUser(lead, enrichment, process.env.SONIA_PHONE). extractJSON or extractText (script is plain text — use extractText).
+4. Build script via Claude: model 'claude-sonnet-4-5-20250929', max_tokens 200, temp 0.6, system: VOICEMAIL_SCRIPT_SYSTEM, user: buildVoicemailScriptUser(lead, enrichment, process.env.SONIA_PHONE). extractJSON or extractText (script is plain text — use extractText).
 5. mp3 = await renderVoicemailMp3(script).
 6. Persist Draft: { leadId, kind:'voicemail', body: script, audioMp3: mp3, status: 'pending' } — voicemail goes through /queue for approval.
 

@@ -135,7 +135,7 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 |Framework |Express 4.x                                      |
 |ORM       |Prisma 5.x                                       |
 |Database  |PostgreSQL 15+ with pgvector                     |
-|AI        |Anthropic Claude (`claude-sonnet-4-20250514`)    |
+|AI        |Anthropic Claude (`claude-sonnet-4-5-20250929`)  |
 |Embeddings|Voyage AI (`voyage-3`, 1024-dim)                 |
 |Scraping  |Playwright + Cheerio                             |
 |CRM       |HubSpot Free + `@hubspot/api-client`             |
