@@ -1,4 +1,4 @@
-const MAX_HTML_CHARS = 80_000;
+const MAX_HTML_CHARS = 30_000;
 
 export const WEBSITE_ANALYZER_SYSTEM = `You analyze treatment-center websites to extract decision-maker signals, marketing pain points, AND infer which Sobriety Select listing tier is the best fit.
 
