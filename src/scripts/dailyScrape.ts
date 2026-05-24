@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
-import { scrapePlaces } from '../pipeline/sources/places.js';
+import { CITIES, QUERIES, scrapePlaces } from '../pipeline/sources/places.js';
 import { scrapeSamhsa } from '../pipeline/sources/samhsa.js';
 
 const TARGETS = [
@@ -13,17 +13,6 @@ const TARGETS = [
 ];
 
 // SAMHSA covers daily volume; Places is paid gap-fill on Mondays only.
-const PLACES_CITIES = [
-  { lat: 25.7617, lng: -80.1918 }, { lat: 27.9506, lng: -82.4572 },
-  { lat: 28.5383, lng: -81.3792 }, { lat: 30.3322, lng: -81.6557 },
-  { lat: 34.0522, lng: -118.2437 }, { lat: 37.7749, lng: -122.4194 },
-  { lat: 32.7157, lng: -117.1611 }, { lat: 29.7604, lng: -95.3698 },
-  { lat: 32.7767, lng: -96.797 }, { lat: 30.2672, lng: -97.7431 },
-  { lat: 39.9612, lng: -82.9988 }, { lat: 39.1031, lng: -84.512 },
-  { lat: 41.4993, lng: -81.6944 }, { lat: 40.7128, lng: -74.006 },
-  { lat: 42.8864, lng: -78.8784 },
-];
-const PLACES_QUERIES = ['treatment center', 'sober living', 'IOP program', 'MAT clinic', 'addiction recovery', 'detox center', 'halfway house'];
 const PLACES_RADIUS_M = 50000;
 const MIN_UPSERTED = 100;
 const MONDAY = 1;
@@ -36,8 +25,8 @@ try {
     totalUpserted += await scrapeSamhsa(t.lat, t.lng, t.radius);
   }
   if (new Date().getDay() === MONDAY) {
-    for (const city of PLACES_CITIES) {
-      for (const q of PLACES_QUERIES) {
+    for (const city of Object.values(CITIES)) {
+      for (const q of QUERIES) {
         totalUpserted += await scrapePlaces(q, city.lat, city.lng, PLACES_RADIUS_M);
       }
     }
