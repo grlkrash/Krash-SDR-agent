@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { claude, extractJSON } from '../shared/claude.js';
 import { fetchSite } from '../shared/fetchSite.js';
+import { findFacilityLeadership, findLinkedIn } from '../shared/serpapi.js';
 import { WEBSITE_ANALYZER_SYSTEM, buildWebsiteAnalyzerUserPrompt } from '../prompts/websiteAnalyzer.js';
 import { detectSignals, type Signals } from './signals.js';
 
@@ -75,17 +76,31 @@ export const enrichLead = async (leadId: string): Promise<void> => {
     return;
   }
   const signals = await detectSignals({ name: lead.name, city: lead.city }, fetched.html);
-  // ownerLinkedIn lookup wired in the next prompt (findLinkedIn).
+  let ownerName = analyzed.owner_or_clinical_director.name;
+  let ownerTitle = analyzed.owner_or_clinical_director.title;
+  let evidenceQuote = analyzed.owner_or_clinical_director.evidence_quote;
+  let ownerLinkedIn: string | null = null;
+  if (ownerName !== null) {
+    ownerLinkedIn = await findLinkedIn(ownerName, lead.name, lead.city);
+  } else {
+    const fallback = await findFacilityLeadership(lead.name);
+    if (fallback !== null) {
+      ownerName = fallback.name;
+      ownerTitle = fallback.title;
+      ownerLinkedIn = fallback.linkedIn;
+      evidenceQuote = null;
+    }
+  }
   await prisma.enrichment.create({ data: {
     leadId,
-    ownerName: analyzed.owner_or_clinical_director.name,
-    ownerTitle: analyzed.owner_or_clinical_director.title,
-    ownerLinkedIn: null,
+    ownerName,
+    ownerTitle,
+    ownerLinkedIn,
     teamSizeSignal: analyzed.team_size_signal,
     expectedProduct: bumpTier(analyzed.expected_product, signals),
     painPoints: analyzed.pain_points as Prisma.InputJsonValue,
     signals: signals as unknown as Prisma.InputJsonValue,
     legitscriptStatus: analyzed.legitscript_mentioned ? 'mentioned' : null,
-    evidenceQuote: analyzed.owner_or_clinical_director.evidence_quote,
+    evidenceQuote,
   } });
 };

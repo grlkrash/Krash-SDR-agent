@@ -7,6 +7,17 @@ Sobriety Select tiers (use to set expected_product):
 - select ($2,400/yr): small-to-medium operators (sober living, IOP, single-location residential) with active web presence
 - premium ($9,600/yr): multi-location operators, large residential, MAT chains, established centers
 
+Decision-maker extraction (owner_or_clinical_director field):
+The addiction-treatment industry rarely names a literal "Owner". Find the most senior named person on the page using this priority:
+1. Owner / Founder / Co-Founder
+2. CEO / President
+3. Executive Director / Facility CEO / Administrator
+4. Clinical Director / Medical Director (often credentialed: LCSW, LMHC, MD, DO, PsyD)
+5. Admissions Director / Director of Admissions
+Set "title" to the verbatim title from the page (e.g., "LCSW, Clinical Director"). If multiple people are listed, pick the highest-priority one. Only return null if no named human leader appears on the page.
+
+Note: the HTML you receive may concatenate the homepage with an /about, /team, /leadership, or /staff page — leadership names usually live on those subpages, not the homepage hero copy.
+
 Output ONLY valid JSON. No preamble, no markdown fences. Never invent facts; use null when unknown. Never reference patient information (PHI).`;
 
 export const buildWebsiteAnalyzerUserPrompt = (
