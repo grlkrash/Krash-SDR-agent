@@ -82,6 +82,12 @@ const PAIN_POINT_PRIORITY = [
   'broken_or_no_https',
 ] as const;
 
+// Cap operator reject reasons before injection. Sonia's hand-typed one-liners
+// never approach this; the cap is purely defensive against a paste-bomb.
+// ~240 chars ≈ 60 input tokens, so the marginal cost per re-draft stays
+// negligible while the system prompt remains cached.
+const REJECT_REASON_MAX_CHARS = 240;
+
 const rankPainPoints = (painPoints: Prisma.JsonValue): string[] => {
   if (painPoints === null || typeof painPoints !== 'object' || Array.isArray(painPoints)) {
     return [];
@@ -89,7 +95,18 @@ const rankPainPoints = (painPoints: Prisma.JsonValue): string[] => {
   return PAIN_POINT_PRIORITY.filter((k) => painPoints[k] === true);
 };
 
-export const buildColdEmailUser = (lead: Lead, enrichment: Enrichment): string => {
+const normalizeRejectReason = (reason: string | null | undefined): string | null => {
+  if (reason === null || reason === undefined) return null;
+  const trimmed = reason.trim();
+  if (trimmed === '') return null;
+  return trimmed.slice(0, REJECT_REASON_MAX_CHARS);
+};
+
+export const buildColdEmailUser = (
+  lead: Lead,
+  enrichment: Enrichment,
+  previousRejectReason?: string | null,
+): string => {
   const owner = enrichment.ownerName === null
     ? null
     : {
@@ -113,5 +130,13 @@ export const buildColdEmailUser = (lead: Lead, enrichment: Enrichment): string =
     evidenceQuote: enrichment.evidenceQuote,
   };
 
-  return `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nINTERNAL TIER (for tone/angle only — NEVER mention tier name, price, or any dollar amount in the email): ${enrichment.expectedProduct}\n\nWrite the email per the tier's angle. If any intelligence signal is high-leverage (missing from competing directories, active hiring, or big spender tech stack), prefer it as your lead observation.`;
+  const base = `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nINTERNAL TIER (for tone/angle only — NEVER mention tier name, price, or any dollar amount in the email): ${enrichment.expectedProduct}\n\nWrite the email per the tier's angle. If any intelligence signal is high-leverage (missing from competing directories, active hiring, or big spender tech stack), prefer it as your lead observation.`;
+
+  const reason = normalizeRejectReason(previousRejectReason);
+  if (reason === null) return base;
+
+  // Tail-only injection so the cached system prompt is unaffected. Reinforce
+  // the absolute pricing rule in case the operator's reason itself echoes a
+  // price or tier name (e.g. "killed it — you mentioned $9600").
+  return `${base}\n\nOPERATOR FEEDBACK ON PREVIOUS REJECTED DRAFT for this prospect: "${reason}"\nAddress this critique directly in this rewrite. The absolute pricing rule and all other HARD RULES still apply — never mention price, dollar amounts, or tier names even if the operator's feedback contains them.`;
 };

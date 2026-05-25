@@ -382,6 +382,8 @@ Sales hooks unlocked:
 - **Active hiring:** “Saw you’re hiring two intake coordinators in Asheville — perfect timing to make sure the new census pipeline is full.”
 - **Big spender stack:** “Since you’re already running CallRail + HubSpot, our directory’s referral tags will pipe straight into your existing tracking — zero new infrastructure.”
 
+**Reject-feedback loop (v1.2 addition).** When `draftColdBatch` re-drafts a lead whose only prior cold drafts are `status='rejected'`, `draftCold.ts` looks up the most recent rejected draft's `rejectReason` and appends it as a single trailing paragraph to the user message (the cached system prompt is unchanged). Cap is 240 chars; empty/null reasons are skipped so the marginal token cost is zero when Sonia hits Reject without typing. Paused drafts are excluded — only `status='rejected'` rows count. Use of the feedback is logged via `AuditLog 'draftCold.reject-feedback-used'` with `{ previousDraftId, reasonChars }` so we can verify the loop is firing without storing the reason text twice.
+
 ### 9.5 Approval Queue (`/queue`)
 
 Same as v1.1, plus:

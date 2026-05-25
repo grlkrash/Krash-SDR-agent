@@ -99,8 +99,27 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
     return null;
   }
 
+  // Re-draft path: if every prior cold draft for this lead was rejected, the
+  // operator's most recent reject reason becomes one extra paragraph appended
+  // to the user message. The system prompt stays cached, so this is ~60
+  // additional input tokens gated on `rejectReason !== null` — paused drafts
+  // are excluded by `status: 'rejected'`.
+  const previousRejected = await prisma.draft.findFirst({
+    where: { leadId, kind: 'cold', status: 'rejected', rejectReason: { not: null } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, rejectReason: true },
+  });
+  const previousRejectReason = previousRejected?.rejectReason ?? null;
+
   const prospectFacts = { lead: leadOnly, enrichment };
-  const baseUser = buildColdEmailUser(leadOnly, enrichment);
+  const baseUser = buildColdEmailUser(leadOnly, enrichment, previousRejectReason);
+
+  if (previousRejectReason !== null && previousRejected !== null) {
+    await audit('draftCold.reject-feedback-used', leadId, {
+      previousDraftId: previousRejected.id,
+      reasonChars: previousRejectReason.length,
+    });
+  }
 
   let gen = await generate([{ role: 'user', content: baseUser }]);
   let evalResult = await evaluate(gen.body, prospectFacts);
