@@ -580,6 +580,7 @@ Output the required Service Key scopes (paste into the file as a top comment):
 - crm.objects.companies.read, crm.objects.companies.write
 - crm.objects.deals.read, crm.objects.deals.write
 - crm.schemas.contacts.read, crm.schemas.companies.read, crm.schemas.deals.read
+- crm.schemas.contacts.write, crm.schemas.companies.write, crm.schemas.deals.write   (required by Prompt 4.2 setupHubspotCustomProperties.ts to create custom properties; HubSpot returns 403 MISSING_SCOPES on /crm/v3/properties without the write scope, even for GET)
 - sales-email-read
 - crm.objects.owners.read   (granular owners scope — the legacy `settings.users.read` no longer satisfies /crm/v3/owners on a Service Key)
 

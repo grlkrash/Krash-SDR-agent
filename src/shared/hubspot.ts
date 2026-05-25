@@ -10,6 +10,11 @@
 //   - crm.objects.companies.read, crm.objects.companies.write
 //   - crm.objects.deals.read, crm.objects.deals.write
 //   - crm.schemas.contacts.read, crm.schemas.companies.read, crm.schemas.deals.read
+//   - crm.schemas.contacts.write, crm.schemas.companies.write,
+//     crm.schemas.deals.write   (required by setupHubspotCustomProperties.ts
+//     to create custom CRM properties; HubSpot returns 403 MISSING_SCOPES
+//     on /crm/v3/properties without the write scope, even for GET —
+//     verified against this token on 2026-05-25)
 //   - sales-email-read
 //   - crm.objects.owners.read   (the granular owners scope; the legacy
 //     `settings.users.read` no longer satisfies /crm/v3/owners on a Service
