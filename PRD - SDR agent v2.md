@@ -138,7 +138,7 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 |AI        |Anthropic Claude (`claude-sonnet-4-5-20250929`)  |
 |Embeddings|Voyage AI (`voyage-3`, 1024-dim)                 |
 |Scraping  |Playwright + Cheerio                             |
-|CRM       |HubSpot Free + `@hubspot/api-client`             |
+|CRM       |HubSpot Free + `@hubspot/api-client` (auth via Service Key — token in `HUBSPOT_ACCESS_TOKEN`, identical bearer-header transport as a private app; scopes managed on the Service Key in HubSpot UI)|
 |Email send|Gmail API via OAuth2 (`sonia@sobrietyselect.com`)|
 |Voice     |Twilio + ElevenLabs TTS (voicemail only)         |
 |Hosting   |Render (web + cron + Postgres)                   |

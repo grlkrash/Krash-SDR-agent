@@ -569,22 +569,24 @@ Create ONLY src/shared/hubspot.ts.
 
 Install @hubspot/api-client (npm install @hubspot/api-client).
 
+Auth: we use a HubSpot Service Key, not a private app. Token goes in HUBSPOT_ACCESS_TOKEN and authenticates identically via the bearer header — no code difference. Scopes are configured on the Service Key in the HubSpot UI.
+
 Export const hs = new Client({ accessToken: process.env.HUBSPOT_ACCESS_TOKEN }).
 
 Export hsRetry<T>(fn: () => Promise<T>, attempts = 5): Promise<T>. On 429/502/503: exponential backoff capped at 30s. Otherwise rethrow.
 
-Output the required private-app scopes (paste into the file as a top comment):
+Output the required Service Key scopes (paste into the file as a top comment):
 - crm.objects.contacts.read, crm.objects.contacts.write
 - crm.objects.companies.read, crm.objects.companies.write
 - crm.objects.deals.read, crm.objects.deals.write
 - crm.schemas.contacts.read, crm.schemas.companies.read, crm.schemas.deals.read
 - sales-email-read
-- settings.users.read
+- crm.objects.owners.read   (granular owners scope — the legacy `settings.users.read` no longer satisfies /crm/v3/owners on a Service Key)
 
 STOP.
 ```
 
-**Acceptance:** Compiles. Sonia creates the HubSpot private app with these scopes manually.
+**Acceptance:** Compiles. Sonia configures these scopes on the HubSpot Service Key manually (HubSpot UI → Settings → Integrations → Private Apps and Service Keys → edit the Service Key → Scopes tab).
 
 ---
 
@@ -1508,7 +1510,7 @@ Create ONLY CHECKLIST.md at repo root with these checkbox sections:
 - [ ] SAMHSA API access form submitted
 - [ ] Google Places billing enabled, daily quota set to $10 cap
 - [ ] Serper subscription active (Developer tier)
-- [ ] HubSpot private app created with all required scopes
+- [ ] HubSpot Service Key configured with all required scopes
 - [ ] HubSpot custom properties created (setupHubspotCustomProperties.ts)
 - [ ] Gmail OAuth refresh token in Render env (run gmailAuth.ts locally first)
 - [ ] Twilio number purchased
