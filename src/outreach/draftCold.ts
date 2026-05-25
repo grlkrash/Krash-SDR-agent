@@ -122,17 +122,24 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
     }
   }
 
-  const draft = await prisma.draft.create({
-    data: {
-      leadId,
-      kind: 'cold',
-      subject: gen.subject,
-      body: gen.body,
-      personalizationPct: evalResult.pct,
-      specificFacts: gen.specific_facts_used,
-      status: 'pending',
-    },
-  });
-
-  return draft.id;
+  try {
+    const draft = await prisma.draft.create({
+      data: {
+        leadId,
+        kind: 'cold',
+        subject: gen.subject,
+        body: gen.body,
+        personalizationPct: evalResult.pct,
+        specificFacts: gen.specific_facts_used,
+        status: 'pending',
+      },
+    });
+    return draft.id;
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      await audit('draftCold.duplicate-race-avoided', leadId, {});
+      return null;
+    }
+    throw error;
+  }
 };
