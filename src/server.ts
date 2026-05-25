@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { queueRouter } from './ui/queue.js';
+import { unsubscribeRouter } from './routes/unsubscribe.js';
 
 const VERSION = '0.1.0';
 const DEFAULT_PORT = 3000;
@@ -16,6 +17,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/', queueRouter);
+app.use('/', unsubscribeRouter);
 
 const port = Number(process.env.PORT) || DEFAULT_PORT;
 
