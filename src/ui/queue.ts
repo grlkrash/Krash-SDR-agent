@@ -187,6 +187,13 @@ const renderCard = (d: DraftWithRel, pw: string): string => {
         <button type="submit" class="btn btn-reject" formaction="${rejectAction}">Reject</button>
       </div>
     </form>
+    <form method="POST" action="/pause-sequence/${encodeURIComponent(d.lead.id)}" style="display:inline">
+      <button type="submit"
+        style="background:#f5a623;color:white;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px"
+        onclick="return confirm('Pause ALL pending emails for this lead?')">
+        ⏸ Pause sequence
+      </button>
+    </form>
   </div>`;
 };
 
@@ -442,4 +449,25 @@ queueRouter.post('/reject/:id', queueAuth, async (req, res) => {
     },
   });
   res.redirect(303, `/queue?pw=${encodeURIComponent(readPw(req))}`);
+});
+
+queueRouter.post('/pause-sequence/:leadId', queueAuth, async (req, res) => {
+  const leadId = req.params.leadId;
+  if (typeof leadId !== 'string' || leadId === '') {
+    res.status(400).json({ error: 'invalid leadId' });
+    return;
+  }
+  const result = await prisma.draft.updateMany({
+    where: { leadId, status: { in: ['pending', 'approved'] } },
+    data: { status: 'paused', rejectReason: 'Manually paused — sequence hold' },
+  });
+  await prisma.auditLog.create({
+    data: {
+      action: 'sequence.paused',
+      entity: 'Lead',
+      entityId: leadId,
+      meta: { pausedBy: 'sonia', count: result.count },
+    },
+  });
+  res.redirect(303, '/queue');
 });
