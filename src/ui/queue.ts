@@ -146,17 +146,13 @@ const renderPrepBriefLink = (lead: Lead): string => {
   return `<a href="${href}" target="_blank" style="font-size:12px;color:#666;text-decoration:none;margin-left:8px">📋 Prep Brief</a>`;
 };
 
-const renderCard = (d: DraftWithRel, pw: string): string => {
+const renderHeader = (d: DraftWithRel): string => {
   const enr = d.lead.enrichment;
   const tier = safeTier(enr?.expectedProduct ?? null);
   const pct = d.personalizationPct ?? null;
   const pctLabel = pct === null ? '— personalization' : `${pct}% personalization`;
   const pains = enr === null ? [] : topPainPoints(enr.painPoints);
   const signals = enr === null ? [] : buildSignalLines(enr.signals);
-  const subject = d.subject ?? '';
-  const pwQs = `?pw=${encodeURIComponent(pw)}`;
-  const approveAction = `/approve/${encodeURIComponent(d.id)}${pwQs}`;
-  const rejectAction = `/reject/${encodeURIComponent(d.id)}${pwQs}`;
 
   const painsHtml =
     pains.length === 0
@@ -173,7 +169,6 @@ const renderCard = (d: DraftWithRel, pw: string): string => {
           .join('')}</div>`;
 
   return `
-  <div class="card">
     <div class="hdr">
       <div class="lead-name">${escapeHtml(d.lead.name)}</div>
       <div class="meta">${escapeHtml(d.lead.city)}, ${escapeHtml(d.lead.state)}${renderSiteLink(d.lead)}</div>
@@ -185,7 +180,27 @@ const renderCard = (d: DraftWithRel, pw: string): string => {
       <span class="badge solid" style="background:${TIER_BG[tier]}">${escapeHtml(TIER_LABEL[tier])}</span>
       <span class="badge solid" style="background:${personalizationBg(pct)}">${escapeHtml(pctLabel)}</span>
       <span class="badge gray">${escapeHtml(d.kind)}</span>
-    </div>
+    </div>`;
+};
+
+const renderPauseForm = (d: DraftWithRel): string =>
+  `<form method="POST" action="/pause-sequence/${encodeURIComponent(d.lead.id)}" style="display:inline">
+      <button type="submit"
+        style="background:#f5a623;color:white;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px"
+        onclick="return confirm('Pause ALL pending emails for this lead?')">
+        ⏸ Pause sequence
+      </button>
+    </form>`;
+
+const renderPendingCard = (d: DraftWithRel, pw: string): string => {
+  const subject = d.subject ?? '';
+  const pwQs = `?pw=${encodeURIComponent(pw)}`;
+  const approveAction = `/approve/${encodeURIComponent(d.id)}${pwQs}`;
+  const rejectAction = `/reject/${encodeURIComponent(d.id)}${pwQs}`;
+
+  return `
+  <div class="card">
+    ${renderHeader(d)}
     <form method="post" action="${approveAction}" class="draft-form">
       <input type="text" name="subject" value="${escapeHtml(subject)}" placeholder="(no subject — voicemail or call)" />
       <textarea name="body" rows="${TEXTAREA_ROWS}">${escapeHtml(d.body)}</textarea>
@@ -196,12 +211,77 @@ const renderCard = (d: DraftWithRel, pw: string): string => {
         <button type="submit" class="btn btn-reject" formaction="${rejectAction}">Reject</button>
       </div>
     </form>
-    <form method="POST" action="/pause-sequence/${encodeURIComponent(d.lead.id)}" style="display:inline">
+    ${renderPauseForm(d)}
+  </div>`;
+};
+
+const renderApprovedCard = (d: DraftWithRel): string => {
+  const subjectText = d.subject ?? '';
+  const subjectHtml =
+    subjectText === ''
+      ? `<pre class="email-text subject empty">(no subject — voicemail or call)</pre>`
+      : `<pre class="email-text subject">${escapeHtml(subjectText)}</pre>`;
+  return `
+  <div class="card approved-card">
+    ${renderHeader(d)}
+    <div class="approved-email">
+      <div class="email-field">
+        <div class="email-label">Subject</div>
+        ${subjectHtml}
+      </div>
+      <div class="email-field">
+        <div class="email-label">Body</div>
+        <pre class="email-text body">${escapeHtml(d.body)}</pre>
+      </div>
+    </div>
+    <div class="approved-actions">
+      ${renderMarkSentForm(d)}
+      ${renderPauseForm(d)}
+    </div>
+  </div>`;
+};
+
+// Shown only after the draft is approved — lets Sonia confirm she sent the
+// email from Gmail by hand so the follow-up sequencer counts from the right
+// timestamp. Removed once Gmail API send is wired up.
+const renderMarkSentForm = (d: DraftWithRel): string => {
+  if (d.status !== 'approved') return '';
+  return `<form method="POST" action="/mark-sent/${encodeURIComponent(d.id)}" style="display:inline">
       <button type="submit"
-        style="background:#f5a623;color:white;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px"
-        onclick="return confirm('Pause ALL pending emails for this lead?')">
-        ⏸ Pause sequence
+        style="background:#5a8f5a;color:white;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px"
+        title="Use when sending from Gmail directly — triggers auto follow-ups">
+        ✓ Sent manually
       </button>
+    </form>`;
+};
+
+// Compact one-line row for the paused/rejected undo zone. Read-only summary
+// (lead name, location, kind, status pill, optional reason) plus a single
+// Undo button that flips this draft back to pending. We deliberately don't
+// render badges/signals/painPoints here — this section is for triage, not
+// review.
+const REASON_PREVIEW_MAX = 120;
+
+const truncate = (s: string, max: number): string =>
+  s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+
+const renderUndoRow = (d: DraftWithRel): string => {
+  const statusClass = d.status === 'paused' ? 'status-paused' : 'status-rejected';
+  const reason = d.rejectReason ?? '';
+  const reasonHtml =
+    reason === ''
+      ? ''
+      : `<span class="undo-reason">${escapeHtml(truncate(reason, REASON_PREVIEW_MAX))}</span>`;
+  return `
+  <div class="undo-row">
+    <div class="undo-info">
+      <span class="lead-name-sm">${escapeHtml(d.lead.name)}</span>
+      <span class="undo-meta">${escapeHtml(d.lead.city)}, ${escapeHtml(d.lead.state)} · ${escapeHtml(d.kind)}</span>
+      <span class="undo-status ${statusClass}">${escapeHtml(d.status)}</span>
+      ${reasonHtml}
+    </div>
+    <form method="POST" action="/undo/${encodeURIComponent(d.id)}" style="display:inline">
+      <button type="submit" class="btn-undo" title="Restore to pending">↩ Undo</button>
     </form>
   </div>`;
 };
@@ -219,6 +299,28 @@ const STYLE = `
   .approve-all.armed { background: #b91c1c; }
   .approve-status { font-size: 13px; color: #6b7280; }
   .empty { padding: 40px; text-align: center; color: #6b7280; background: white; border: 1px solid #e5e7eb; border-radius: 8px; }
+  .queue-section { margin-top: 28px; }
+  .queue-section:first-of-type { margin-top: 0; }
+  .section-title { font-size: 16px; font-weight: 600; margin: 0 0 12px; color: #1f2937; display: flex; align-items: baseline; gap: 8px; }
+  .section-title .count { font-weight: 400; font-size: 14px; color: #6b7280; }
+  .section-empty { padding: 20px; text-align: center; color: #6b7280; background: white; border: 1px dashed #e5e7eb; border-radius: 8px; }
+  .approved-email { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-top: 12px; }
+  .email-field + .email-field { margin-top: 10px; }
+  .email-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 4px; }
+  .email-text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; color: #0f172a; white-space: pre-wrap; word-wrap: break-word; margin: 0; background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; user-select: text; cursor: text; }
+  .email-text.subject { font-weight: 500; }
+  .email-text.empty { color: #9ca3af; font-style: italic; }
+  .approved-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .undo-row { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .undo-info { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; color: #374151; flex: 1; min-width: 0; }
+  .lead-name-sm { font-weight: 600; color: #111; font-size: 14px; }
+  .undo-meta { color: #6b7280; }
+  .undo-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+  .status-paused { background: #fef3c7; color: #92400e; }
+  .status-rejected { background: #fee2e2; color: #991b1b; }
+  .undo-reason { color: #6b7280; font-style: italic; font-size: 12px; flex-basis: 100%; word-wrap: break-word; }
+  .btn-undo { background: #475569; color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; flex-shrink: 0; }
+  .btn-undo:hover { background: #334155; }
   .card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
   .hdr { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .lead-name { font-weight: 600; font-size: 16px; }
@@ -299,17 +401,35 @@ const HOLD_SCRIPT = `
 `;
 
 const renderPage = (
-  drafts: DraftWithRel[],
+  pending: DraftWithRel[],
+  approved: DraftWithRel[],
+  pausedRejected: DraftWithRel[],
   totalPending: number,
+  totalApproved: number,
+  totalPausedRejected: number,
   sortMode: 'newest' | 'value',
   pw: string,
 ): string => {
   const newestSel = sortMode === 'newest' ? ' selected' : '';
   const valueSel = sortMode === 'value' ? ' selected' : '';
-  const cards =
-    drafts.length === 0
-      ? '<div class="empty">No pending drafts. Nice work.</div>'
-      : drafts.map((d) => renderCard(d, pw)).join('\n');
+  const pendingCards =
+    pending.length === 0
+      ? '<div class="section-empty">No pending drafts. Nice work.</div>'
+      : pending.map((d) => renderPendingCard(d, pw)).join('\n');
+  const approvedCards =
+    approved.length === 0
+      ? '<div class="section-empty">Nothing waiting to send.</div>'
+      : approved.map((d) => renderApprovedCard(d)).join('\n');
+  // Hide the undo section entirely when nothing is paused/rejected — it's a
+  // tool that's only relevant when there's something to fix.
+  const undoSection =
+    totalPausedRejected === 0
+      ? ''
+      : `
+  <section class="queue-section" id="undo-zone">
+    <h2 class="section-title">🗄 Recently paused / rejected <span class="count">(${totalPausedRejected})</span></h2>
+    ${pausedRejected.map((d) => renderUndoRow(d)).join('\n')}
+  </section>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -321,23 +441,30 @@ const renderPage = (
 </head>
 <body>
   <h1>Approval Queue</h1>
-  <div class="top-meta">${totalPending} pending draft${totalPending === 1 ? '' : 's'} · showing ${drafts.length}</div>
+  <div class="top-meta">${totalPending} pending · ${totalApproved} approved &amp; ready to send${totalPausedRejected > 0 ? ` · <a href="#undo-zone">${totalPausedRejected} to undo ↓</a>` : ''}</div>
   <div class="toolbar">
     <form method="get" action="/queue">
       <input type="hidden" name="pw" value="${escapeHtml(pw)}" />
-      <label for="sort">Sort:</label>
+      <label for="sort">Sort pending:</label>
       <select id="sort" name="sort" onchange="this.form.submit()">
         <option value="newest"${newestSel}>Newest</option>
         <option value="value"${valueSel}>Commission value (high to low)</option>
       </select>
     </form>
     <button type="button" id="approve-all" class="approve-all"
-      title="Hold for 3 seconds to approve every visible draft">
-      Hold 3s to approve all visible (${drafts.length})
+      title="Hold for 3 seconds to approve every visible pending draft">
+      Hold 3s to approve all visible (${pending.length})
     </button>
     <span id="approve-all-status" class="approve-status"></span>
   </div>
-  ${cards}
+  <section class="queue-section">
+    <h2 class="section-title">📋 Pending review <span class="count">(${totalPending})</span></h2>
+    ${pendingCards}
+  </section>
+  <section class="queue-section">
+    <h2 class="section-title">✉️ Approved — ready to send <span class="count">(${totalApproved})</span></h2>
+    ${approvedCards}
+  </section>${undoSection}
   <script>${HOLD_SCRIPT}</script>
 </body>
 </html>`;
@@ -360,21 +487,54 @@ queueRouter.use(express.urlencoded({ extended: false }));
 queueRouter.get('/queue', queueAuth, async (req, res) => {
   const sortMode: 'newest' | 'value' = req.query.sort === 'value' ? 'value' : 'newest';
   const pw = readPw(req);
-  const [recent, totalPending] = await Promise.all([
-    prisma.draft.findMany({
-      where: { status: 'pending' },
-      orderBy: { createdAt: 'desc' },
-      take: FETCH_CAP,
-      include: { lead: { include: { enrichment: true } } },
-    }),
-    prisma.draft.count({ where: { status: 'pending' } }),
-  ]);
-  const ordered =
+  // Three separate fetches so each section is paged independently and one
+  // status can't crowd out another under FETCH_CAP. Approved + paused/rejected
+  // are always newest-first; the value-sort dropdown only re-ranks pending.
+  const [pendingRows, approvedRows, pausedRejectedRows, totalPending, totalApproved, totalPausedRejected] =
+    await Promise.all([
+      prisma.draft.findMany({
+        where: { status: 'pending' },
+        orderBy: { createdAt: 'desc' },
+        take: FETCH_CAP,
+        include: { lead: { include: { enrichment: true } } },
+      }),
+      prisma.draft.findMany({
+        where: { status: 'approved' },
+        orderBy: { createdAt: 'desc' },
+        take: FETCH_CAP,
+        include: { lead: { include: { enrichment: true } } },
+      }),
+      prisma.draft.findMany({
+        where: { status: { in: ['paused', 'rejected'] } },
+        orderBy: { createdAt: 'desc' },
+        take: FETCH_CAP,
+        include: { lead: { include: { enrichment: true } } },
+      }),
+      prisma.draft.count({ where: { status: 'pending' } }),
+      prisma.draft.count({ where: { status: 'approved' } }),
+      prisma.draft.count({ where: { status: { in: ['paused', 'rejected'] } } }),
+    ]);
+  const orderedPending =
     sortMode === 'value'
-      ? [...recent].sort((a, b) => commissionForDraft(b) - commissionForDraft(a))
-      : recent;
-  const visible = ordered.slice(0, PAGE_SIZE);
-  res.type('html').send(renderPage(visible, totalPending, sortMode, pw));
+      ? [...pendingRows].sort((a, b) => commissionForDraft(b) - commissionForDraft(a))
+      : pendingRows;
+  const visiblePending = orderedPending.slice(0, PAGE_SIZE);
+  const visibleApproved = approvedRows.slice(0, PAGE_SIZE);
+  const visiblePausedRejected = pausedRejectedRows.slice(0, PAGE_SIZE);
+  res
+    .type('html')
+    .send(
+      renderPage(
+        visiblePending,
+        visibleApproved,
+        visiblePausedRejected,
+        totalPending,
+        totalApproved,
+        totalPausedRejected,
+        sortMode,
+        pw,
+      ),
+    );
 });
 
 queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
@@ -419,7 +579,7 @@ queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
       },
     },
   });
-  res.redirect(303, `/queue?pw=${encodeURIComponent(readPw(req))}`);
+  res.redirect(303, '/queue');
 });
 
 queueRouter.post('/reject/:id', queueAuth, async (req, res) => {
@@ -457,7 +617,81 @@ queueRouter.post('/reject/:id', queueAuth, async (req, res) => {
       meta: { reason, previousStatus: existing.status },
     },
   });
-  res.redirect(303, `/queue?pw=${encodeURIComponent(readPw(req))}`);
+  res.redirect(303, '/queue');
+});
+
+queueRouter.post('/mark-sent/:id', queueAuth, async (req, res) => {
+  const id = readId(req);
+  if (id === null) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const existing = await prisma.draft.findUnique({
+    where: { id },
+    select: { leadId: true },
+  });
+  if (existing === null) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  await prisma.draft.update({
+    where: { id },
+    data: {
+      status: 'sent',
+      sentAt: new Date(),
+      approvedBy: 'sonia',
+    },
+  });
+  await prisma.auditLog.create({
+    data: {
+      action: 'draft.marked-sent-manually',
+      entity: 'Draft',
+      entityId: id,
+      meta: { leadId: existing.leadId },
+    },
+  });
+  res.redirect(303, '/queue');
+});
+
+// Single-draft restore from paused/rejected → pending. Only valid from those
+// two statuses — refuses to clobber pending/approved/sent. Resets rejectReason
+// so the draft re-enters the queue clean. Approves/rejects the draft from
+// scratch on next review (we don't try to remember a prior approval state).
+queueRouter.post('/undo/:id', queueAuth, async (req, res) => {
+  const id = readId(req);
+  if (id === null) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const existing = await prisma.draft.findUnique({
+    where: { id },
+    select: { status: true, rejectReason: true },
+  });
+  if (existing === null) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (existing.status !== 'paused' && existing.status !== 'rejected') {
+    res.status(400).json({ error: `cannot undo from status ${existing.status}` });
+    return;
+  }
+  await prisma.draft.update({
+    where: { id },
+    data: { status: 'pending', rejectReason: null },
+  });
+  await prisma.auditLog.create({
+    data: {
+      action: 'queue.restore',
+      entity: 'draft',
+      entityId: id,
+      meta: {
+        previousStatus: existing.status,
+        previousReason: existing.rejectReason,
+        restoredBy: 'sonia',
+      },
+    },
+  });
+  res.redirect(303, '/queue');
 });
 
 queueRouter.post('/pause-sequence/:leadId', queueAuth, async (req, res) => {
