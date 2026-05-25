@@ -1,5 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
+import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import { z } from 'zod';
 import { claude, extractJSON } from '../shared/claude.js';
 import {
@@ -8,6 +9,10 @@ import {
   buildColdEmailUser,
 } from '../prompts/coldEmail.js';
 import { guessEmail } from '../shared/guessEmail.js';
+
+const cached = (text: string): Array<TextBlockParam> => [
+  { type: 'text', text, cache_control: { type: 'ephemeral' } },
+];
 
 const MODEL = 'claude-sonnet-4-5-20250929';
 const GEN_MAX_TOKENS = 1024;
@@ -46,7 +51,7 @@ const generate = async (messages: ChatMessage[]): Promise<GenOutput> => {
     model: MODEL,
     max_tokens: GEN_MAX_TOKENS,
     temperature: GEN_TEMPERATURE,
-    system: COLD_EMAIL_SYSTEM,
+    system: cached(COLD_EMAIL_SYSTEM),
     messages,
   });
   return GenSchema.parse(extractJSON(msg));
@@ -57,7 +62,7 @@ const evaluate = async (body: string, prospectFacts: unknown): Promise<EvalOutpu
     model: MODEL,
     max_tokens: EVAL_MAX_TOKENS,
     temperature: EVAL_TEMPERATURE,
-    system: COLD_EMAIL_EVALUATOR_SYSTEM,
+    system: cached(COLD_EMAIL_EVALUATOR_SYSTEM),
     messages: [{
       role: 'user',
       content: `Email body:\n${body}\n\nProspect facts:\n${JSON.stringify(prospectFacts, null, 2)}`,

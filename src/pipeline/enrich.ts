@@ -1,5 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
+import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import { z } from 'zod';
 import { claude, extractJSON } from '../shared/claude.js';
 import { fetchSite } from '../shared/fetchSite.js';
@@ -13,6 +14,10 @@ const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: proc
 const ANALYZER_MODEL = 'claude-sonnet-4-5-20250929';
 const TIERS = ['claimed', 'select', 'premium'] as const;
 type Tier = (typeof TIERS)[number];
+
+const cached = (text: string): Array<TextBlockParam> => [
+  { type: 'text', text, cache_control: { type: 'ephemeral' } },
+];
 
 const EMPTY_SIGNALS: Signals = {
   competingDirectories: { onAnyDirectory: false, missingFromAll: false },
@@ -56,7 +61,7 @@ const callAnalyzer = async (
   const tryOnce = async (suffix: string): Promise<Analyzed | null> => {
     const msg = await claude.messages.create({
       model: ANALYZER_MODEL, max_tokens: 2048, temperature: 0,
-      system: WEBSITE_ANALYZER_SYSTEM,
+      system: cached(WEBSITE_ANALYZER_SYSTEM),
       messages: [{ role: 'user', content: base + suffix }],
     });
     try { return AnalyzerSchema.parse(extractJSON(msg)); } catch { return null; }
