@@ -137,6 +137,15 @@ const renderSiteLink = (lead: Lead): string => {
   return ` · <a href="${escapeHtml(lead.website)}" target="_blank" rel="noopener">site</a>`;
 };
 
+// Cookie-based auth (per Security Prompt S.1) — no ?pw= on this URL. The
+// /prep-brief/lookup handler resolves the company → first associated deal
+// and redirects to /prep-brief/{dealId}.
+const renderPrepBriefLink = (lead: Lead): string => {
+  if (lead.hubspotCompanyId === null) return '';
+  const href = `/prep-brief/lookup?companyId=${encodeURIComponent(lead.hubspotCompanyId)}`;
+  return `<a href="${href}" target="_blank" style="font-size:12px;color:#666;text-decoration:none;margin-left:8px">📋 Prep Brief</a>`;
+};
+
 const renderCard = (d: DraftWithRel, pw: string): string => {
   const enr = d.lead.enrichment;
   const tier = safeTier(enr?.expectedProduct ?? null);
@@ -169,7 +178,7 @@ const renderCard = (d: DraftWithRel, pw: string): string => {
       <div class="lead-name">${escapeHtml(d.lead.name)}</div>
       <div class="meta">${escapeHtml(d.lead.city)}, ${escapeHtml(d.lead.state)}${renderSiteLink(d.lead)}</div>
     </div>
-    <div class="owner">${renderOwnerLine(enr)}</div>
+    <div class="owner">${renderOwnerLine(enr)}${renderPrepBriefLink(d.lead)}</div>
     ${painsHtml}
     ${signalsHtml}
     <div class="badges">
