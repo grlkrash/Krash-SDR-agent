@@ -15,7 +15,7 @@ const TIERS = ['claimed', 'select', 'premium'] as const;
 type Tier = (typeof TIERS)[number];
 
 const EMPTY_SIGNALS: Signals = {
-  competingDirectories: { psychologyToday: false, rehabsCom: false, recoveryCom: false, missingFromAll: false },
+  competingDirectories: { onAnyDirectory: false, missingFromAll: false },
   hiring: { active: false, roleTitles: [], rolesPostedRecently: 0 },
   techStack: { hubspot: false, salesforce: false, callrail: false, googleAds: false, facebookPixel: false, marketo: false, bigSpenderScore: 0 },
 };
@@ -75,11 +75,18 @@ export const enrichLead = async (leadId: string): Promise<void> => {
     await prisma.auditLog.create({ data: { action: 'enrich.claude.parse-failed', entity: 'lead', entityId: leadId, meta: {} } });
     return;
   }
-  const signals = await detectSignals({ name: lead.name, city: lead.city }, fetched.html);
+  const signals = await detectSignals(
+    { name: lead.name, city: lead.city },
+    fetched.html,
+    analyzed.expected_product,
+  );
   let ownerName = analyzed.owner_or_clinical_director.name;
   let ownerTitle = analyzed.owner_or_clinical_director.title;
   let evidenceQuote = analyzed.owner_or_clinical_director.evidence_quote;
   let ownerLinkedIn: string | null = null;
+  // Gate per the optimization: only spend a SerpAPI call on findLinkedIn when
+  // the analyzer actually returned a name; otherwise fall back to the
+  // facility-leadership lookup which discovers a name and link in one query.
   if (ownerName !== null) {
     ownerLinkedIn = await findLinkedIn(ownerName, lead.name, lead.city);
   } else {

@@ -1,10 +1,10 @@
 import { serpapi, type SerpResult } from '../shared/serpapi.js';
 
+export type ExpectedProduct = 'claimed' | 'select' | 'premium';
+
 export type Signals = {
   competingDirectories: {
-    psychologyToday: boolean;
-    rehabsCom: boolean;
-    recoveryCom: boolean;
+    onAnyDirectory: boolean;
     missingFromAll: boolean;
   };
   hiring: {
@@ -25,6 +25,7 @@ export type Signals = {
 
 const MAX_ROLE_TITLES = 5;
 const HIRING_RESULT_LIMIT = 10;
+const DIRECTORY_RESULT_LIMIT = 5;
 
 const TECH_PATTERNS = {
   hubspot: /<script[^>]+src=[^>]*(?:js\.hs-scripts|js\.hsforms|js\.hsanalytics)/i,
@@ -35,11 +36,12 @@ const TECH_PATTERNS = {
   marketo: /<script[^>]+src=[^>]*munchkin\.marketo\.net/i,
 } as const;
 
-const firstResultMentionsName = (results: SerpResult[], name: string): boolean => {
-  if (results.length === 0) return false;
-  const first = results[0];
-  const haystack = `${first.title ?? ''} ${first.snippet ?? ''}`.toLowerCase();
-  return haystack.includes(name.toLowerCase());
+const anyResultMentionsName = (results: SerpResult[], name: string): boolean => {
+  const needle = name.toLowerCase();
+  return results.some((r) => {
+    const haystack = `${r.title ?? ''} ${r.snippet ?? ''}`.toLowerCase();
+    return haystack.includes(needle);
+  });
 };
 
 const extractRoleTitles = (results: SerpResult[]): string[] => {
@@ -59,24 +61,19 @@ const extractRoleTitles = (results: SerpResult[]): string[] => {
   return out;
 };
 
+// One combined SerpAPI call across the three rehab directories, scoped via
+// site: operators so we only get pages actually hosted on those domains.
 const detectDirectories = async (
   facility: { name: string; city: string },
 ): Promise<Signals['competingDirectories']> => {
-  const q = (site: string): string =>
-    `site:${site} "${facility.name}" ${facility.city}`;
-  const [pt, rc, rec] = await Promise.all([
-    serpapi(q('psychologytoday.com')),
-    serpapi(q('rehabs.com')),
-    serpapi(q('recovery.com')),
-  ]);
-  const psychologyToday = firstResultMentionsName(pt, facility.name);
-  const rehabsCom = firstResultMentionsName(rc, facility.name);
-  const recoveryCom = firstResultMentionsName(rec, facility.name);
+  const results = await serpapi(
+    `"${facility.name}" ${facility.city} (site:psychologytoday.com OR site:rehabs.com OR site:recovery.com)`,
+    DIRECTORY_RESULT_LIMIT,
+  );
+  const onAnyDirectory = anyResultMentionsName(results, facility.name);
   return {
-    psychologyToday,
-    rehabsCom,
-    recoveryCom,
-    missingFromAll: !psychologyToday && !rehabsCom && !recoveryCom,
+    onAnyDirectory,
+    missingFromAll: !onAnyDirectory,
   };
 };
 
@@ -105,12 +102,18 @@ const detectTechStack = (html: string): Signals['techStack'] => {
   return { ...flags, bigSpenderScore };
 };
 
+const EMPTY_HIRING: Signals['hiring'] = { active: false, roleTitles: [], rolesPostedRecently: 0 };
+
+// Hiring is only worth a SerpAPI call on tiers we'll actually pursue with
+// premium messaging. 'claimed' leads get a stub so we save the call.
 export const detectSignals = async (
   facility: { name: string; city: string },
   html: string,
+  expectedProduct: ExpectedProduct,
 ): Promise<Signals> => {
   const competingDirectories = await detectDirectories(facility);
-  const hiring = await detectHiring(facility);
+  const hiring =
+    expectedProduct === 'claimed' ? EMPTY_HIRING : await detectHiring(facility);
   const techStack = detectTechStack(html);
   return { competingDirectories, hiring, techStack };
 };
