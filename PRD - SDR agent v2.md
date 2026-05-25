@@ -429,6 +429,37 @@ Brief is *also* persisted as a `Draft` with `kind='prep-brief'`, status=‘sent�
 
 `refreshGoogleSignals` (Mon 4am) is renamed to `refreshIntentSignals`. In addition to re-checking Places reviews, it now re-runs the Serper hiring query for the top 100 open deals. If a deal that was previously `hiring.active=false` becomes `hiring.active=true`, that’s a major re-engagement signal — push to top of next-day’s daily brief with a “🚨 Hiring spike” badge.
 
+### 9.13 Operator Clustering (DEFERRED — not yet implemented)
+
+**Problem.** The addiction-treatment industry is heavily PE-rolled-up; one operator commonly runs many facilities. After enrichment, several owners cluster into multiple Lead rows that should be a single buying decision:
+
+```
+Robert Rihn          → 6 facilities
+Cindy Grubbs SHRM-CP → 3 facilities
+Roaya Tyson          → 3 facilities
++ ~7 owners running 2 facilities each
+```
+
+(Numbers from the ~170-row May 2026 enrichment cohort.) Treated independently, each lead would get its own cold email — same human gets emailed up to 6× → spam-trap risk, wasted Anthropic spend, and HubSpot ends up with N Companies that should be 1.
+
+**Decision: ship the read-only signal first, gate behavior later.** A column on Enrichment is rejected because the operator-key formula will evolve (the search-fallback path already returned two different LinkedIn URLs for the same Robert Rihn) and a column locks in stale values that need backfilling on every formula tweak. A draft-time suppression layer is rejected as the first move because it changes outcomes based on a formula no human has eyeballed. The right first step is a derived view that surfaces clusters without committing to behavior.
+
+**Phase 1 (when needed):** Postgres view `OperatorClusters` derived from Enrichment, grouped by `COALESCE("ownerLinkedIn", LOWER(TRIM("ownerName")))`. Exposed through one Prisma raw-query helper `getOperatorClusters()`. No schema migration beyond the view itself. ~30 lines.
+
+**Phase 2 (when drafts go autopilot):** Inside `outreach/draftCold.ts`, before generating a Draft, check the view: if any other Lead in the same cluster already has a Draft with `status IN ('approved','sent')` within the last 30 days, skip and `AuditLog 'draft.skipped.operator-duplicate'`. ~15 lines.
+
+**Phase 3 (only if hot-path filtering on operator key proves needed):** Promote to a materialized `operatorKey` column on Enrichment with a one-shot backfill. Probably never required at our volume.
+
+**Touchpoint integration when each is built:**
+
+- **`pipeline/hubspotSync.ts`:** Use the cluster as the dedup key. Each cluster maps to one HubSpot Company with `operatorKey` as a custom property; member Leads write the same `hubspotCompanyId` back. Robert Rihn’s 6 facilities = 1 Company with 6 Contacts, not 6 Companies.
+- **`ui/queue.ts`:** Draft cards in the same cluster show a “🏢 Roll-up: N facilities · M pending drafts · Skip duplicates →” line above the existing signals line. The skip-duplicates action bulk-rejects sibling drafts with `rejectReason: 'operator-duplicate-of-{leadId}'`.
+- **`outreach/dailyBrief.ts`:** Dedicated section before the per-deal scoring list — “TODAY’S OPERATOR CLUSTERS: 5 owners running 2+ facilities, total weighted LTV $X”, then the top operators with facility counts and tier inference rolled up to the cluster.
+
+**Known precision caveat.** The fallback `findFacilityLeadership` query occasionally returns a real LinkedIn human whose profile mentions the facility name but who actually works elsewhere (observed: a Coral Sober Living lead tagged with someone from Lighthouse Recovery). The view is informational, so a human reviews; once Phase 2 is on, that precision tradeoff is what gates whether to enable suppression by default vs. require approval.
+
+**Why it’s not in §6 “No new tables” conflict.** The view is not a table — it’s a query expressed as DDL. It can be `DROP VIEW`-ed at any time without data loss. If Phase 3 ever happens it adds a column, not a table.
+
 -----
 
 ## 10. Claude Prompt Architecture
