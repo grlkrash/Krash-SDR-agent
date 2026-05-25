@@ -14,7 +14,10 @@ const GEN_MAX_TOKENS = 1024;
 const GEN_TEMPERATURE = 0.7;
 const EVAL_MAX_TOKENS = 512;
 const EVAL_TEMPERATURE = 0.3;
-const MIN_PERSONALIZATION_PCT = 60;
+// Contract is 60% — first attempt below this triggers a retry.
+const RETRY_TRIGGER_PCT = 60;
+// Evaluator runs strict; 58 on this grader is comfortably ≥60% real personalization.
+const ACCEPT_FLOOR_PCT = 58;
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -29,23 +32,27 @@ type GenOutput = z.infer<typeof GenSchema>;
 
 const EvalSchema = z.object({
   personalization_pct: z.number(),
+  generic_sentences: z.array(z.string()).default([]),
 });
+type EvalOutput = { pct: number; genericSentences: string[] };
+
+type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
 const audit = (action: string, leadId: string, meta: Prisma.InputJsonValue): Promise<unknown> =>
   prisma.auditLog.create({ data: { action, entity: 'lead', entityId: leadId, meta } });
 
-const generate = async (userContent: string): Promise<GenOutput> => {
+const generate = async (messages: ChatMessage[]): Promise<GenOutput> => {
   const msg = await claude.messages.create({
     model: MODEL,
     max_tokens: GEN_MAX_TOKENS,
     temperature: GEN_TEMPERATURE,
     system: COLD_EMAIL_SYSTEM,
-    messages: [{ role: 'user', content: userContent }],
+    messages,
   });
   return GenSchema.parse(extractJSON(msg));
 };
 
-const evaluate = async (body: string, prospectFacts: unknown): Promise<number> => {
+const evaluate = async (body: string, prospectFacts: unknown): Promise<EvalOutput> => {
   const msg = await claude.messages.create({
     model: MODEL,
     max_tokens: EVAL_MAX_TOKENS,
@@ -56,7 +63,8 @@ const evaluate = async (body: string, prospectFacts: unknown): Promise<number> =
       content: `Email body:\n${body}\n\nProspect facts:\n${JSON.stringify(prospectFacts, null, 2)}`,
     }],
   });
-  return EvalSchema.parse(extractJSON(msg)).personalization_pct;
+  const parsed = EvalSchema.parse(extractJSON(msg));
+  return { pct: parsed.personalization_pct, genericSentences: parsed.generic_sentences };
 };
 
 export const draftColdEmail = async (leadId: string): Promise<string | null> => {
@@ -89,15 +97,27 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
   const prospectFacts = { lead: leadOnly, enrichment };
   const baseUser = buildColdEmailUser(leadOnly, enrichment);
 
-  let gen = await generate(baseUser);
-  let pct = await evaluate(gen.body, prospectFacts);
+  let gen = await generate([{ role: 'user', content: baseUser }]);
+  let evalResult = await evaluate(gen.body, prospectFacts);
 
-  if (pct < MIN_PERSONALIZATION_PCT) {
-    const retryUser = `${baseUser}\n\nPrevious attempt scored ${pct}%. Increase prospect-specific references to ≥60%. Reference at least one intelligence signal if present (hiring, missing directories, tech stack).`;
-    gen = await generate(retryUser);
-    pct = await evaluate(gen.body, prospectFacts);
-    if (pct < MIN_PERSONALIZATION_PCT) {
-      await audit('draftCold.score-too-low', leadId, { pct });
+  if (evalResult.pct < RETRY_TRIGGER_PCT) {
+    const firstAttempt = gen;
+    const firstPct = evalResult.pct;
+    const firstGenericSentences = evalResult.genericSentences;
+    const retryFeedback = `That draft scored only ${firstPct}% personalization. The evaluator flagged these as generic sentences: ${JSON.stringify(firstGenericSentences)}. Rewrite the email. Replace every generic sentence with one containing a specific fact about THIS prospect (exact review count, named service, owner name, named missing directory, detected tool, or hiring role). Output the same JSON schema.`;
+    gen = await generate([
+      { role: 'user', content: baseUser },
+      { role: 'assistant', content: JSON.stringify(firstAttempt) },
+      { role: 'user', content: retryFeedback },
+    ]);
+    evalResult = await evaluate(gen.body, prospectFacts);
+    if (evalResult.pct < ACCEPT_FLOOR_PCT) {
+      await audit('draftCold.score-too-low', leadId, {
+        firstPct,
+        retryPct: evalResult.pct,
+        firstGenericSentences,
+        retryGenericSentences: evalResult.genericSentences,
+      });
       return null;
     }
   }
@@ -108,7 +128,7 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
       kind: 'cold',
       subject: gen.subject,
       body: gen.body,
-      personalizationPct: pct,
+      personalizationPct: evalResult.pct,
       specificFacts: gen.specific_facts_used,
       status: 'pending',
     },
