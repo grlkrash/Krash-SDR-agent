@@ -362,6 +362,9 @@ The enrichment pipeline now runs **five stages** per lead:
   - Facebook Pixel: `connect.facebook.net/.*fbevents.js`
   - Marketo: `munchkin.marketo.net`
     Output: `signals.techStack: { hubspot: bool, salesforce: bool, callrail: bool, googleAds: bool, facebookPixel: bool, marketo: bool, bigSpenderScore: 0-5 }` (count of presence). Any score ≥2 is a “big spender” — prime target for Premium / SEO / PPC upsell.
+
+**Tech-stack call-prep mirror (v1.2 addition).** `signals.techStack` round-trips into HubSpot as a single JSON blob (`ss_signals`), which is unreadable on a live call. `hubspotSync.ts` now also writes a sibling Company property `ss_tech_stack_summary` (single-line Text) populated by `buildTechStackSummary(enrichment.signals)` — a human-readable list of detected tools in stable display order with a count suffix, e.g. `"HubSpot, CallRail, Google Ads (3 tools)"`. Empty string when nothing is detected (matches the empty-string convention of other `ss_*` fields). The new property is provisioned by `setupHubspotCustomProperties.ts` and is idempotent on re-run. No schema change: the source of truth stays `Enrichment.signals.techStack` and `ss_signals`; this is a derived read-optimized field for the Company record view Sonia opens during discovery calls. (Per-tool boolean properties for HubSpot list segmentation are intentionally deferred — file under "add when first list-filter need shows up.")
+
 1. **LegitScript check** + **expectedProduct inference**
 
 The new signals influence `expectedProduct`:

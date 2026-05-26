@@ -115,6 +115,19 @@ const PROPERTIES: PropSpec[] = [
   {
     objectType: 'companies',
     groupName: GROUP_COMPANY,
+    name: 'ss_tech_stack_summary',
+    // Human-readable mirror of signals.techStack — surfaces tools detected
+    // on the lead's website (e.g. "HubSpot, CallRail (2 tools)") so Sonia
+    // can read it at a glance during a live call. Raw flags still live in
+    // ss_signals as JSON. Single-line Text on purpose (call-prep, not data).
+    label: 'SS Tech Stack Summary',
+    description: 'Marketing tools detected on the lead website, e.g. "HubSpot, CallRail (2 tools)". Quick reference for call prep; raw flags live in ss_signals.',
+    type: PropertyCreateTypeEnum.String,
+    fieldType: PropertyCreateFieldTypeEnum.Text,
+  },
+  {
+    objectType: 'companies',
+    groupName: GROUP_COMPANY,
     name: 'ss_legitscript_status',
     label: 'SS LegitScript Status',
     description: 'LegitScript certification status as scraped/enriched.',

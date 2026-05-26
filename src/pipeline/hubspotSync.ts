@@ -20,6 +20,7 @@ import { PrismaClient } from '@prisma/client';
 import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/companies/models/Filter.js';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import { guessEmail } from '../shared/guessEmail.js';
+import type { Signals } from './signals.js';
 
 const PACING_MS = 100;
 const SEARCH_LIMIT = 1;
@@ -70,6 +71,38 @@ const splitName = (full: string | null): { firstname: string; lastname: string }
   return { firstname: firstname ?? '', lastname: rest.join(' ') };
 };
 
+// Mapping is declared in display order so the rendered summary is stable
+// across runs (e.g. always "HubSpot, CallRail" never "CallRail, HubSpot"
+// for the same flags). Keyed on `keyof Signals['techStack']` to keep this
+// in lockstep with src/pipeline/signals.ts at compile time.
+const TECH_STACK_LABELS: Array<[keyof Signals['techStack'], string]> = [
+  ['hubspot', 'HubSpot'],
+  ['salesforce', 'Salesforce'],
+  ['callrail', 'CallRail'],
+  ['googleAds', 'Google Ads'],
+  ['facebookPixel', 'Facebook Pixel'],
+  ['marketo', 'Marketo'],
+];
+
+// Builds the human-readable call-prep string for the new
+// ss_tech_stack_summary HubSpot Company property. We wrote `signals`
+// ourselves in enrich.ts, but it round-trips through a Prisma JSON column
+// so we narrow defensively from `unknown` rather than trust the shape.
+// Returns '' (not null) when nothing is detected — matches the empty-string
+// convention used by sibling ss_* writes (e.g. ss_google_rating).
+const buildTechStackSummary = (signals: unknown): string => {
+  if (typeof signals !== 'object' || signals === null) return '';
+  const techStack = (signals as { techStack?: unknown }).techStack;
+  if (typeof techStack !== 'object' || techStack === null) return '';
+  const flags = techStack as Partial<Record<keyof Signals['techStack'], unknown>>;
+  const detected = TECH_STACK_LABELS
+    .filter(([key]) => flags[key] === true)
+    .map(([, label]) => label);
+  if (detected.length === 0) return '';
+  const noun = detected.length === 1 ? 'tool' : 'tools';
+  return `${detected.join(', ')} (${detected.length} ${noun})`;
+};
+
 const buildCompanyProperties = (
   lead: {
     name: string;
@@ -101,6 +134,7 @@ const buildCompanyProperties = (
   ss_expected_product: enrichment.expectedProduct ?? DEFAULT_EXPECTED_PRODUCT,
   ss_pain_points: JSON.stringify(enrichment.painPoints),
   ss_signals: JSON.stringify(enrichment.signals),
+  ss_tech_stack_summary: buildTechStackSummary(enrichment.signals),
   ss_legitscript_status: enrichment.legitscriptStatus ?? DEFAULT_LEGITSCRIPT_STATUS,
 });
 

@@ -605,6 +605,7 @@ Company custom properties (groupName: 'sobrietyselect'):
 - ss_expected_product (enumeration: claimed, select, premium)
 - ss_pain_points (string, multi-line)
 - ss_signals (string, multi-line — stores JSON.stringify of signals)
+- ss_tech_stack_summary (string, single-line — human-readable mirror of signals.techStack, v1.2 addition)
 - ss_legitscript_status (string)
 
 Contact custom properties:
@@ -622,6 +623,8 @@ STOP.
 ```
 
 **Acceptance:** Run twice — first run creates properties, second run says “exists” for all. HubSpot UI shows the new fields.
+
+**Tech-stack call-prep mirror (v1.2 addition).** A second pass adds `ss_tech_stack_summary` (single-line Text, group `companyinformation`) alongside the existing JSON-blob `ss_signals`. Sonia reads this string on the HubSpot Company record during live calls; the raw JSON stays the system-of-record for code that needs structured access. Re-running the script after the addition creates only the new property and leaves the rest as `exists`. See Prompt 4.3 for the write-side change.
 
 ---
 
@@ -665,6 +668,8 @@ STOP.
 ```
 
 **Acceptance:** Run on 5 enriched leads → 5 HubSpot companies appear with all `ss_`* fields populated, including ss_signals as a JSON string.
+
+**Tech-stack call-prep mirror (v1.2 addition).** `hubspotSync.ts` also writes `ss_tech_stack_summary` via a local `buildTechStackSummary(enrichment.signals)` helper. Helper narrows defensively from `unknown` (the Prisma JSON column type), filters `signals.techStack` against a stable display-order label map (`HubSpot, Salesforce, CallRail, Google Ads, Facebook Pixel, Marketo`), and returns a string like `"HubSpot, CallRail (2 tools)"` — or `""` when nothing is detected (matches the empty-string convention used by `ss_google_rating` and friends). One added line in the property literal: `ss_tech_stack_summary: buildTechStackSummary(enrichment.signals)`. Acceptance extension: on a lead whose website was detected to load CallRail + Google Ads, the Company record in HubSpot shows `SS Tech Stack Summary = "CallRail, Google Ads (2 tools)"` and the `ss_signals` JSON still contains the underlying flags.
 
 ---
 
