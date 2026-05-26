@@ -1343,6 +1343,23 @@ STOP.
 
 ---
 
+### Prompt 9.1.1 — Lock Q{N} to calendar quarter
+
+```
+Edit ONLY src/prompts/quarterlyCheckin.ts.
+
+QUARTERLY_CHECKIN_SYSTEM: rewrite the soft-offer clause to
+"End with a soft offer 'want me to pull your Q{N} listing analytics?' where N is the calendar_quarter integer from user context (1-4) — never customer tenure."
+
+buildQuarterlyUser: rename `current_quarter_for_offer: Q${quarter}` → `calendar_quarter: ${quarter}` (integer, no Q prefix).
+
+STOP.
+```
+
+**Acceptance:** Re-run the Prompt 9.1 acceptance on a 90-day-old closed-won deal during calendar Q2 → draft body soft-offer reads "Q2 listing analytics", not "Q1".
+
+---
+
 ### Prompt 9.2 — Renewal warning
 
 ```

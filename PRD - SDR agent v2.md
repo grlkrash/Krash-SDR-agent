@@ -500,7 +500,7 @@ Required prompts:
 - `websiteAnalyzer.ts` — extracts owner, tier, painPoints
 - `followUpTemplates.ts` — rule-based touches 2–5
 - `replied.ts` — replied-thread drafter
-- `quarterlyCheckin.ts` — 90/180/270-day touch
+- `quarterlyCheckin.ts` — 90/180/270-day touch (the `Q{N} listing analytics` soft offer resolves to the **current calendar quarter** 1-4, never customer tenure — see INSTRUCTIONS Prompt 9.1.1)
 - `renewalWarning.ts` — 60-day pre-renewal
 - `reactivation.ts` — stale-deal drafter
 - `voicemailScript.ts` — 25-second VM script

@@ -1,13 +1,12 @@
 // Quarterly check-in drafter prompt. Triggered ~90/180/270d after a deal
 // closed-won. Tone is post-sale CSM, not SDR: warmth + service, no pitch.
-// The system prompt's literal `Q{N}` is a model-side substitution token —
-// the user prompt provides the actual current quarter number plus enough
-// context (months retained, tier, location, owner) for one specific
-// listing-performance / census question.
+// `Q{N}` in the soft-offer line resolves to the current calendar quarter
+// passed in via the user prompt's `calendar_quarter` field — NOT to the
+// customer's tenure. See INSTRUCTIONS Prompt 9.1.1 for the fix history.
 
 import type { Enrichment, Lead } from '@prisma/client';
 
-export const QUARTERLY_CHECKIN_SYSTEM = `Write a short, warm, no-pitch quarterly check-in to a Sobriety Select client. Reference how long they've been with us. Ask ONE specific question about their listing performance or facility's current census. End with a soft offer ('want me to pull your Q{N} listing analytics?'). 70 words max. No sales pitch — just warmth and service.
+export const QUARTERLY_CHECKIN_SYSTEM = `Write a short, warm, no-pitch quarterly check-in to a Sobriety Select client. Reference how long they've been with us. Ask ONE specific question about their listing performance or facility's current census. End with a soft offer 'want me to pull your Q{N} listing analytics?' where N is the calendar_quarter integer from user context (1-4) — never customer tenure. 70 words max. No sales pitch — just warmth and service.
 
 Output JSON: { "subject": string, "body": string }`;
 
@@ -52,7 +51,7 @@ export const buildQuarterlyUser = (
     `tier: ${deal.productType ?? enrichment.expectedProduct ?? 'unknown'}`,
     `retained_for: ${formatRetention(daysSinceClose)}`,
     `days_since_close: ${daysSinceClose}`,
-    `current_quarter_for_offer: Q${quarter}`,
+    `calendar_quarter: ${quarter}`,
   ];
   if (lead.services.length > 0) {
     lines.push(`services: ${lead.services.join(', ')}`);
