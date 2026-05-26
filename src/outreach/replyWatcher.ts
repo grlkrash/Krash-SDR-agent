@@ -1,6 +1,6 @@
 // Inbound-reply watcher.
 //
-// Poll Gmail every 15 minutes for messages received in the last 30 minutes,
+// Poll Gmail every ~5 minutes (cronTick) for messages received in the last 15 minutes,
 // match each inbound against a Draft we previously sent (by RFC-822
 // Message-ID), and ask Claude for a short reply draft. The new Draft lands
 // in /queue with status='pending' for Sonia to approve. As a side effect
@@ -15,7 +15,7 @@
 //   one prisma.draft.create wins — the loser raises P2002 and the catch
 //   branch re-loads the winner and resumes the HubSpot upsert if needed.
 //   The AuditLog lookup remains as a cheap fast-path to skip Gmail/Claude
-//   round-trips on the steady-state second pass (30-min lookback × 15-min
+//   round-trips on the steady-state second pass (15-min lookback × ~5-min
 //   cron deliberately overlaps).
 //
 // HubSpot upsert:
@@ -54,7 +54,7 @@ import { REPLIED_SYSTEM, buildRepliedUser } from '../prompts/replied.js';
 const MODEL = 'claude-sonnet-4-5-20250929';
 const MAX_TOKENS = 512;
 const TEMPERATURE = 0.5;
-const LOOKBACK_QUERY = 'newer_than:30m -from:me';
+const LOOKBACK_QUERY = 'newer_than:15m -from:me';
 const MAX_RESULTS = 50;
 const OOO_SUBJECT_PREFIXES = ['Out of Office', 'Automatic reply'] as const;
 const OOO_BODY_MARKERS = [

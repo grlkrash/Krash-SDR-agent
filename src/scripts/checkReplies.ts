@@ -1,7 +1,7 @@
 // tsx src/scripts/checkReplies.ts
 //
-// Cron entry (*/15 * * * *): poll Gmail for inbound replies in the last 30
-// minutes, dedup against AuditLog, and draft a 'replied' Draft per match.
+// Cron entry (~every 5 min via cronTick): poll Gmail for inbound replies in the
+// last 15 minutes, dedup against AuditLog, and draft a 'replied' Draft per match.
 // All real work — Gmail fetch, header parsing, OOO detection, draft
 // generation, per-inbound audit — lives in checkReplies(); this script
 // just wraps it in cron success/failure bookkeeping.

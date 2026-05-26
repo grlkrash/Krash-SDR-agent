@@ -333,7 +333,7 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 |`0 9 * * *`   |9:00 AM  |`quarterlyCheckins`   |outreach|
 |`0 10 * * *`  |10:00 AM |`renewalWarnings`     |outreach|
 |`0 14 * * *`  |2:00 PM  |`dropVoicemails`      |outreach|
-|`*/15 * * * *`|15 min   |`checkReplies`        |outreach|
+|`*/5 * * * *` |~5 min   |`checkReplies`        |outreach|
 |`*/10 * * * *`|10 min   |`sendApproved`        |outreach|
 |`0 17 * * *`  |5:00 PM  |`sendDailyBrief`      |outreach|
 |`30 17 * * *` |5:30 PM  |`checkCostCaps`       |ops     |
@@ -419,9 +419,9 @@ Same as v1.1, plus:
 
 ### 9.7 Reply Detection — v1.2 additions
 
-`checkReplies` (`*/15 * * * *`) polls Gmail with `newer_than:30m -from:me`, header-checks against `GMAIL_FROM` to guard against BCC-to-self and filter re-delivery routes, runs an OOO heuristic (`Out of Office` / `Automatic reply` subject prefixes; `I am out of the office` / `currently out of the office` body markers), then parses `In-Reply-To` + `References` headers and matches the resulting RFC-822 ids against `Draft.gmailMessageId`. A match generates a `kind='replied'` Draft via Claude (`claude-sonnet-4-5-20250929`, max_tokens 512, temperature 0.5) using the COLD draft (not the last follow-up) as the original-pitch context.
+`checkReplies` (every ~5 min via `cronTick`) polls Gmail with `newer_than:15m -from:me`, header-checks against `GMAIL_FROM` to guard against BCC-to-self and filter re-delivery routes, runs an OOO heuristic (`Out of Office` / `Automatic reply` subject prefixes; `I am out of the office` / `currently out of the office` body markers), then parses `In-Reply-To` + `References` headers and matches the resulting RFC-822 ids against `Draft.gmailMessageId`. A match generates a `kind='replied'` Draft via Claude (`claude-sonnet-4-5-20250929`, max_tokens 512, temperature 0.5) using the COLD draft (not the last follow-up) as the original-pitch context.
 
-**Race safety.** The 30-min lookback × 15-min cron cadence overlaps deliberately so a missed tick is recovered. Two concurrent `checkReplies` invocations could both pass the AuditLog fast-path; race-safe correctness is enforced by the `Draft.inboundGmailMessageId @unique` index. The losing worker hits `P2002`, re-loads the winner, and resumes the HubSpot upsert half if it was skipped.
+**Race safety.** The 15-min lookback × ~5-min cron cadence overlaps deliberately so a missed tick is recovered. Two concurrent `checkReplies` invocations could both pass the AuditLog fast-path; race-safe correctness is enforced by the `Draft.inboundGmailMessageId @unique` index. The losing worker hits `P2002`, re-loads the winner, and resumes the HubSpot upsert half if it was skipped.
 
 **HubSpot inbound engagement (v1.2 addition).** Every matched reply also logs a HubSpot Email engagement with `hs_email_direction='INCOMING_EMAIL'`, `hs_timestamp` = the message's `internalDate` (actual receive time, not our cron-tick time), `hs_email_subject` and `hs_email_text` from the snippet, plus `hs_email_headers` carrying the parsed `from` address. Associations are created via `hs.crm.associations.v4.basicApi.createDefault('emails', emailId, 'contacts'|'companies', ...)` so HubSpot resolves type IDs. Idempotency lives on `Draft.hubspotInboundEmailId` — separate from `hubspotEmailId` because the outbound *response* engagement (created when sender.ts sends the replied draft) will claim the latter. Best-effort: HubSpot failures audit as `hubspotInboundEngagement.failed` and never propagate; the DB-side `Draft kind='replied'` is the source of truth.
 

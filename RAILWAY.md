@@ -12,6 +12,8 @@ Pre-deploy checklist — you have **not** deployed yet. Follow these steps when 
 
 One cron service is cheaper than 14 separate Railway services. `src/scripts/cronTick.ts` runs every 5 minutes and fires jobs whose Eastern-time schedule matches the current tick.
 
+**Reply detection:** `checkReplies` runs on **every** 5-minute tick (~5 min latency). No second cron service needed. Gmail lookback is `newer_than:15m` for overlap if a tick is skipped.
+
 ## 1. Create Railway project
 
 1. [railway.com](https://railway.com) → **New Project** → **Deploy from GitHub repo** → select `Krash-SDR-agent`.

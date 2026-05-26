@@ -28,7 +28,9 @@ export const CRON_JOBS: CronJobDef[] = [
   { name: 'quarterlyCheckins', kind: 'daily', etHour: 9, etMinute: 0, modulePath: './quarterlyCheckins.js', enabled: true },
   { name: 'renewalWarnings', kind: 'daily', etHour: 10, etMinute: 0, modulePath: './renewalWarnings.js', enabled: true },
   { name: 'dropVoicemails', kind: 'daily', etHour: 14, etMinute: 0, modulePath: './dropVoicemails.js', enabled: false },
-  { name: 'checkReplies', kind: 'interval', intervalMinutes: 15, modulePath: './checkReplies.js', enabled: true },
+  // Every Railway cron tick (*/5 UTC): isDueNow uses minute % 5 < 5; shouldSkip
+  // enforces ≥4.5 min between runs — ~5 min reply detection cadence.
+  { name: 'checkReplies', kind: 'interval', intervalMinutes: 5, modulePath: './checkReplies.js', enabled: true },
   { name: 'sendApproved', kind: 'interval', intervalMinutes: 10, modulePath: './sendApproved.js', enabled: true },
   { name: 'sendDailyBrief', kind: 'daily', etHour: 17, etMinute: 0, modulePath: './sendDailyBrief.js', enabled: true },
   { name: 'checkCostCaps', kind: 'daily', etHour: 17, etMinute: 30, modulePath: './checkCostCaps.js', enabled: true },
