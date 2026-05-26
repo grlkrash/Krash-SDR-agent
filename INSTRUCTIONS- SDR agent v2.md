@@ -701,7 +701,7 @@ For each draft, render a card containing:
 - Commission badge: "$60 Claimed" / "$240 Select" / "$960 Premium" — colored by tier (claimed gray, select blue, premium gold)
 - personalizationPct badge: green ≥70, yellow 60-69, red <60
 - Editable input for subject, textarea (12 rows) for body
-- Three submit buttons in a tiny form: Approve (POST /approve/:id), Edit & Approve (same POST after JS syncs edits), Reject (POST /reject/:id with reason input)
+- Two submit buttons in a tiny form: Approve (POST /approve/:id, which always diff-and-saves any subject/body edits) and Reject (POST /reject/:id with reason input). The textarea is always editable — clicking Approve persists whatever's in it; there is no separate "Edit & Approve" button (removed in v1.2 as redundant)
 
 Top of page:
 - Pending count

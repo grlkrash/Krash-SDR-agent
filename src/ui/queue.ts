@@ -230,7 +230,6 @@ const renderPendingCard = (d: DraftWithRel, pw: string): string => {
       <input type="text" name="reason" placeholder="reject reason (only sent with Reject)" />
       <div class="actions">
         <button type="submit" class="btn btn-approve">Approve</button>
-        <button type="submit" class="btn btn-edit-approve">Edit &amp; Approve</button>
         <button type="submit" class="btn btn-reject" formaction="${rejectAction}">Reject</button>
       </div>
     </form>
@@ -370,7 +369,6 @@ const STYLE = `
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn { font-size: 14px; padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-weight: 500; }
   .btn-approve { background: #16a34a; color: white; }
-  .btn-edit-approve { background: #2563eb; color: white; }
   .btn-reject { background: white; color: #b91c1c; border-color: #fecaca; }
   .btn-kill { background: #dc2626; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; }
   .btn-kill:hover { background: #b91c1c; }
