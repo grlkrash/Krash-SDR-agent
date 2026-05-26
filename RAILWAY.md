@@ -58,12 +58,30 @@ Settings → **Cron Schedule** (UTC):
 
 Railway requires cron services to **exit when done** — `cronTick.ts` does this.
 
-## 4. Shared environment variables
+## 4. Shared environment variables (required for startup)
 
-Set on **both** `ssa-web` and `ssa-cron` (Railway shared variables or copy-paste):
+**If you skip `DATABASE_URL`, the container will crash with:**
+
+```text
+P1001: Can't reach database server at `127.0.0.1:5432`
+```
+
+That means Prisma fell back to the **build-only placeholder** — the web service never received a real Postgres URL.
+
+On **both** `ssa-web` and `ssa-cron` → **Variables** → add:
+
+| Variable | Value |
+| --- | --- |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+
+Use the variable picker: select your **Postgres** service → `DATABASE_URL`. If the database service has a different name (e.g. `ssa-db`), use `${{ssa-db.DATABASE_URL}}` instead.
+
+Project-level **Shared Variables** work too — attach them to both services.
+
+Other secrets (copy from `.env.example`):
 
 ```
-DATABASE_URL          ← from Postgres service
+DATABASE_URL          ← ${{Postgres.DATABASE_URL}}  (REQUIRED)
 ANTHROPIC_API_KEY=
 VOYAGE_API_KEY=
 GOOGLE_MAPS_API_KEY=
@@ -146,6 +164,7 @@ These stay `enabled: false` in `src/shared/cronSchedule.ts` until their scripts 
 | Error | Fix |
 | --- | --- |
 | `PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_URL` | Pull latest `main` — `prisma.config.ts` no longer requires a real URL at build time. Redeploy. |
+| `P1001` / `127.0.0.1:5432` / database `"build"` | **`DATABASE_URL` not set on the web service.** Add `${{Postgres.DATABASE_URL}}` → redeploy. |
 | `UndefinedVar: $NIXPACKS_PATH` | Railway/Nixpacks lint warning in generated Dockerfile — usually harmless if the build continues. |
 | Build succeeds but `/health` fails | Set runtime `DATABASE_URL`, run `CREATE EXTENSION vector`, check HubSpot/Claude keys. |
 
