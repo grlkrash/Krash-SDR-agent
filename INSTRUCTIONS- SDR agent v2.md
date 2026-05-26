@@ -145,7 +145,7 @@ For each row, call upsertLead from src/shared/lead.ts with:
 - services: parse row.services array's f1/f2/f3 codes — map 'OTP'→'mat','BU'→'mat','NU'→'mat','DM'→'detox','IOP'→'iop','PHP'→'php','RES'→'residential','OUTPATIENT'→'outpatient' (deduplicate the result array)
 - sourceMeta: the original row
 
-Set fetch User-Agent: "Cardwell-Beach Sobriety-Select Research/1.0 (sonia@sobrietyselect.com)".
+Set fetch User-Agent: "Sobriety Select Research/1.0 (sonia@sobrietyselect.com)".
 
 Returns count upserted.
 
@@ -456,7 +456,7 @@ Export three things:
 
 1. COLD_EMAIL_SYSTEM — system prompt string. Content:
 
-"You write cold B2B emails to addiction-treatment-center owners and clinical directors on behalf of Sobriety Select, a curated treatment directory operated by Cardwell-Beach LLC.
+"You write cold B2B emails to addiction-treatment-center owners and clinical directors on behalf of Sobriety Select, a curated treatment directory that connects families actively searching for treatment with centers that have open beds.
 
 You will receive: prospect facts, the expected Sobriety Select tier for this prospect, AND intelligence signals (competing directories, hiring activity, marketing tech stack).
 
@@ -800,8 +800,9 @@ Export `sendEmail(opts: { to: string; subject: string; body: string; inReplyTo?:
 OAuth2 client built from GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, with credentials.refresh_token = GMAIL_REFRESH_TOKEN. Send as process.env.GMAIL_FROM.
 
 Body construction:
-- Append CAN-SPAM footer (blank line + hr + lines):
-  Sobriety Select / Cardwell-Beach LLC, 105 Maxess Road, Suite 124, Melville, NY 11747
+- Append CAN-SPAM footer (blank line + hr + lines). Use the Sobriety Select
+  DBA only — never the parent LLC name on customer-facing surfaces:
+  Sobriety Select, 105 Maxess Road, Suite 124, Melville, NY 11747
   Unsubscribe: {PUBLIC_URL}/unsubscribe?token={signUnsubToken(to)}
 - Headers set in the raw email:
   - List-Unsubscribe: <{PUBLIC_URL}/unsubscribe?token=...>, <mailto:unsubscribe@sobrietyselect.com>

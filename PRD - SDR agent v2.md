@@ -1,7 +1,7 @@
 # PRD — Sobriety Select SDR Agent (SSA)
 
 **Version:** 1.2
-**Owner:** Sonia Gibbs (Independent Contractor, Cardwell-Beach LLC / Sobriety Select)
+**Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
 **Last Updated:** May 20, 2026
 

@@ -4,7 +4,7 @@ import { upsertLead } from '../../shared/lead.js';
 const BASE_URL = 'https://findtreatment.gov/locator/exportsAsJson/v2';
 const PAGE_SIZE = 2000;
 const METERS_PER_MILE = 1609.34;
-const USER_AGENT = 'Cardwell-Beach Sobriety-Select Research/1.0 (sonia@sobrietyselect.com)';
+const USER_AGENT = 'Sobriety Select Research/1.0 (sonia@sobrietyselect.com)';
 
 const SERVICE_CODE_MAP: Record<string, string> = {
   OTP: 'mat',

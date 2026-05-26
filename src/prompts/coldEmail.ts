@@ -1,6 +1,6 @@
 import type { Enrichment, Lead, Prisma } from '@prisma/client';
 
-export const COLD_EMAIL_SYSTEM = `You write cold B2B emails to addiction-treatment-center owners and clinical directors on behalf of Sobriety Select, a curated treatment directory operated by Cardwell-Beach LLC.
+export const COLD_EMAIL_SYSTEM = `You write cold B2B emails to addiction-treatment-center owners and clinical directors on behalf of Sobriety Select, a curated treatment directory that connects families actively searching for treatment with centers that have open beds.
 
 You will receive: prospect facts, an INTERNAL tier label (claimed/select/premium) for tone/angle only, AND intelligence signals (competing directories, hiring activity, marketing tech stack).
 
