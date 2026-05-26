@@ -13,6 +13,13 @@ const PAGE_SIZE = 30;
 const FETCH_CAP = 200;
 const TEXTAREA_ROWS = 12;
 const HOLD_TO_CONFIRM_MS = 3000;
+const DAY_MS = 86_400_000;
+// Paused drafts older than this are treated as stale: the conversation that
+// triggered the pause has gone cold, and resuming as-is would queue a draft
+// whose facts/signals are months out of date. The undo button is replaced
+// with a "Re-draft fresh" button that rejects the stale draft so
+// draftColdBatch picks the lead up cleanly on the next cron tick.
+const STALE_PAUSE_DAYS = 14;
 
 const COMMISSION = { claimed: 60, select: 240, premium: 960 } as const;
 type Tier = keyof typeof COMMISSION;
@@ -291,6 +298,9 @@ const REASON_PREVIEW_MAX = 120;
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 
+const isStalePaused = (d: DraftWithRel): boolean =>
+  d.status === 'paused' && Date.now() - d.createdAt.getTime() > STALE_PAUSE_DAYS * DAY_MS;
+
 const renderUndoRow = (d: DraftWithRel): string => {
   const statusClass = d.status === 'paused' ? 'status-paused' : 'status-rejected';
   const reason = d.rejectReason ?? '';
@@ -298,6 +308,13 @@ const renderUndoRow = (d: DraftWithRel): string => {
     reason === ''
       ? ''
       : `<span class="undo-reason">${escapeHtml(truncate(reason, REASON_PREVIEW_MAX))}</span>`;
+  const restoreForm = isStalePaused(d)
+    ? `<form method="POST" action="/redraft/${encodeURIComponent(d.id)}" style="display:inline" onsubmit="return confirm('Discard this stale paused draft so a fresh one is generated tomorrow?')">
+        <button type="submit" class="btn-undo" style="background:#0d9488" title="Reject stale draft and re-enter cold-draft pool">↻ Re-draft fresh</button>
+      </form>`
+    : `<form method="POST" action="/undo/${encodeURIComponent(d.id)}" style="display:inline">
+        <button type="submit" class="btn-undo" title="Restore to pending">↩ Undo</button>
+      </form>`;
   return `
   <div class="undo-row">
     <div class="undo-info">
@@ -307,9 +324,7 @@ const renderUndoRow = (d: DraftWithRel): string => {
       ${reasonHtml}
     </div>
     <div class="undo-actions">
-      <form method="POST" action="/undo/${encodeURIComponent(d.id)}" style="display:inline">
-        <button type="submit" class="btn-undo" title="Restore to pending">↩ Undo</button>
-      </form>
+      ${restoreForm}
       ${renderKillLeadForm(d)}
     </div>
   </div>`;
@@ -739,6 +754,48 @@ queueRouter.post('/undo/:id', queueAuth, async (req, res) => {
         previousStatus: existing.status,
         previousReason: existing.rejectReason,
         restoredBy: 'sonia',
+      },
+    },
+  });
+  res.redirect(303, '/queue');
+});
+
+// Stale-paused resume path. Rather than restoring a months-old draft as-is
+// (its facts/signals would be out of date), reject it so draftColdBatch's
+// eligibility query (status NOT 'rejected') re-includes the lead and a
+// fresh draft is generated on the next cron tick. Only valid from 'paused';
+// rejected drafts already have an explicit re-draft path via the cron's
+// MAX_REJECTS_PER_LEAD logic.
+queueRouter.post('/redraft/:id', queueAuth, async (req, res) => {
+  const id = readId(req);
+  if (id === null) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const existing = await prisma.draft.findUnique({
+    where: { id },
+    select: { status: true, leadId: true, createdAt: true },
+  });
+  if (existing === null) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (existing.status !== 'paused') {
+    res.status(400).json({ error: `cannot redraft from status ${existing.status}` });
+    return;
+  }
+  await prisma.draft.update({
+    where: { id },
+    data: { status: 'rejected', rejectReason: 'auto-redraft on resume (stale)' },
+  });
+  await prisma.auditLog.create({
+    data: {
+      action: 'queue.redraft-on-resume',
+      entity: 'Draft',
+      entityId: id,
+      meta: {
+        leadId: existing.leadId,
+        ageDays: Math.floor((Date.now() - existing.createdAt.getTime()) / DAY_MS),
       },
     },
   });

@@ -751,6 +751,40 @@ STOP.
 
 ---
 
+### Prompt 5.3 — Stale-paused re-draft on resume (NEW)
+
+```
+Edit ONLY src/ui/queue.ts. Add a re-draft action that replaces "↩ Undo" on paused drafts older than 14 days, so resume regenerates with fresh enrichment instead of restoring stale content.
+
+At top of file (with other consts):
+const STALE_PAUSE_DAYS = 14;
+const DAY_MS = 86_400_000;
+
+Add helper near other helpers:
+const isStalePaused = (d: DraftWithRel): boolean =>
+  d.status === 'paused' && Date.now() - d.createdAt.getTime() > STALE_PAUSE_DAYS * DAY_MS;
+
+Modify renderUndoRow:
+- If isStalePaused(d): render a single button posting to /redraft/${encodeURIComponent(d.id)}, label "↻ Re-draft fresh", class="btn-undo", style override background:#0d9488. onsubmit="return confirm('Discard this stale paused draft so a fresh one is generated tomorrow?')".
+- Otherwise: keep current "↩ Undo" button.
+
+Add new route POST /redraft/:id (queueAuth):
+- Validate id via existing readId helper.
+- prisma.draft.findUnique select { status: true, leadId: true, createdAt: true }. 404 if missing.
+- 400 if status !== 'paused' (don't redraft from rejected — those have an explicit reject path already).
+- prisma.draft.update → status='rejected', rejectReason='auto-redraft on resume (stale)'.
+- prisma.auditLog.create action='queue.redraft-on-resume', entity='Draft', entityId=id, meta={ leadId, ageDays: Math.floor((Date.now() - existing.createdAt.getTime()) / DAY_MS) }.
+- res.redirect(303, '/queue').
+
+Why no synchronous re-draft: rejecting unblocks draftColdBatch's eligibility query (it skips on status NOT 'rejected'), so the lead re-enters generation on the next cron tick with current enrichment. Calling draftColdEmail inline here would hold the redirect for ~10s of Claude calls.
+
+STOP.
+```
+
+**Acceptance:** Pause a draft, set its `createdAt` to 15 days ago via SQL (`UPDATE "Draft" SET "createdAt" = now() - interval '15 days' WHERE id='...'`), reload `/queue`. Undo zone shows "↻ Re-draft fresh" instead of Undo. Click → row disappears, draft is `status='rejected'` with reason `'auto-redraft on resume (stale)'`, AuditLog has `queue.redraft-on-resume`. Run `draftColdBatch` → lead is eligible again, new pending cold draft appears.
+
+---
+
 ## Phase 6 — Sending & Sequencing
 
 ### Prompt 6.1 — Gmail OAuth + send
@@ -935,6 +969,85 @@ STOP.
 ```
 
 **Acceptance:** Reply to a sent email from another address → within 15 min, a Draft kind=‘replied’ appears in /queue. The original sequence’s next touch won’t fire (sequencer detects replied=true).
+
+---
+
+### Prompt 6.6 — Manual nudge + awaiting-reply queue section (NEW)
+
+```
+Create ONLY src/prompts/nudge.ts AND src/outreach/draftNudge.ts. Edit src/ui/queue.ts to add (A) a Nudge button on paused undo-rows, (B) a new "💤 Sent — awaiting reply 10+ days" section, and (C) the POST /nudge/:leadId route shared by both surfaces. Goal: zero manual memory needed to know which leads are due for a follow-up nudge.
+
+src/prompts/nudge.ts:
+Export NUDGE_SYSTEM:
+"Write a short check-in to a treatment-center prospect we recently corresponded with but who has gone quiet. Reference the prior thread vaguely ('after our chat last week', 'following up on my note'). One specific value-prop hook tied to a known fact about THEIR facility (named missing directory, hiring role, detected tech, owner name). End with a clear ask: 15-min call OR a yes/no question. 60 words max. No greeting fluff. No 'just checking in'. No pricing, no tier names ('Claimed', 'Select', 'Premium'), no dollar amounts.
+
+Output ONLY valid JSON. No preamble, no markdown fences. Schema: { \"subject\": string, \"body\": string }"
+
+Export buildNudgeUser(lead, enrichment, priorDraftBody): string. Structured key:value block with facility name, city, state, top 1-2 strongest signals (hiring/competingDirectories/techStack from enrichment.signals), and the prior draft body verbatim under "Prior thread tone reference:".
+
+src/outreach/draftNudge.ts:
+Export draftNudge(leadId: string): Promise<string | null>.
+
+Mirror the prisma adapter, cached() helper, audit() helper, and zod parsing setup from src/outreach/draftCold.ts.
+
+Flow:
+1. Fetch lead include enrichment. Return null if missing.
+2. If lead.doNotContact → audit('draftNudge.do-not-contact', leadId, {}), return null.
+3. priorDraft = prisma.draft.findFirst where leadId, status IN ('sent','paused'), orderBy createdAt desc. If null → audit('draftNudge.no-prior-draft', leadId, {}), return null.
+4. claude.messages.create model 'claude-sonnet-4-5-20250929', max_tokens 512, temperature 0.6, system cached(NUDGE_SYSTEM), single user message buildNudgeUser(lead, enrichment, priorDraft.body).
+5. extractJSON → zod parse z.object({ subject: z.string(), body: z.string() }).
+6. scanLeaks(body, [lead.name]) → on hits, audit('draftNudge.leak-detected', leadId, { hits }), return null.
+7. prisma.draft.create kind='nudge', status='pending', subject, body, specificFacts=[], personalizationPct=null. Return draft.id.
+
+No evaluator step (nudges are short and approval-gated; saves a Claude call).
+
+src/ui/queue.ts edits:
+
+Add at top with other consts:
+const REPLY_SILENCE_DAYS = 10;
+(Reuse existing DAY_MS constant added in Prompt 5.3.)
+
+(A) Nudge button on paused undo-rows:
+In renderUndoRow, when d.status === 'paused' (regardless of stale), append a "↻ Nudge" button next to the existing restore button (Undo OR Re-draft fresh — both keep their normal behavior). Form POST to /nudge/${encodeURIComponent(d.lead.id)}, class="btn-undo" with style override background:#0d9488. onsubmit="return confirm('Generate a nudge draft for this lead? The current paused draft will be archived.')".
+
+(B) New "💤 Sent — awaiting reply 10+ days" section:
+- Refactor renderKillLeadForm to expose a helper renderKillLeadFormById(leadId: string): string used by both renderKillLeadForm(d) and the new awaiting-reply rows. No behavior change.
+- Add to the GET /queue Promise.all:
+    const tenDaysAgoMs = Date.now() - REPLY_SILENCE_DAYS * DAY_MS;
+    const tenDaysAgo = new Date(tenDaysAgoMs);
+  prisma.lead.findMany where:
+    doNotContact: false,
+    drafts: {
+      some: { status: 'sent' },
+      none: { OR: [
+        { status: { in: ['pending','approved','paused'] } },
+        { status: 'sent', sentAt: { gt: tenDaysAgo } },
+        { kind: 'nudge', createdAt: { gt: tenDaysAgo } },
+      ] },
+    },
+  include: { enrichment: true, drafts: { where: { status: 'sent' }, orderBy: { sentAt: 'desc' }, take: 1, select: { sentAt: true, kind: true } } }
+  take: FETCH_CAP.
+- prisma.lead.count with the same where (totalAwaitingReply).
+- Sort the fetched leads in JS by drafts[0].sentAt asc (oldest silence first).
+- Slice to PAGE_SIZE for display.
+- Render section between Approved and Undo zones. Title: `💤 Sent — awaiting reply ${REPLY_SILENCE_DAYS}+ days <span class="count">(${totalAwaitingReply})</span>`. If totalAwaitingReply === 0, omit the section entirely (mirror the existing undo-section pattern).
+- Each row: lead name, "City, State", "Last sent N days ago" (Math.floor((Date.now() - drafts[0].sentAt.getTime()) / DAY_MS)), then two buttons: Nudge (POST /nudge/:leadId, confirm "Generate a nudge draft for this lead?") and renderKillLeadFormById(lead.id, lead.name). Reuse the existing .undo-row / .undo-info / .undo-actions classes.
+- Update top-meta line: include `${totalAwaitingReply} awaiting reply` between approved-count and the to-undo link, with an anchor to #awaiting-reply when > 0. Give the section id="awaiting-reply".
+
+(C) POST /nudge/:leadId route:
+- queueAuth, validate leadId param string non-empty (400 otherwise).
+- newId = await draftNudge(leadId). If null → res.redirect(303, '/queue?nudge=skipped').
+- prisma.draft.updateMany where leadId AND status='paused' → { status: 'rejected', rejectReason: 'Superseded by nudge draft' }. Capture {count}. (No-op cleanly when there are no paused drafts — the awaiting-reply path leaves the original sent draft untouched.)
+- prisma.auditLog.create action='queue.nudge-generated', entity='Lead', entityId=leadId, meta={ newDraftId: newId, supersededCount: count }.
+- res.redirect(303, '/queue').
+
+STOP.
+```
+
+**Acceptance:**
+1. Pause a cold draft on lead A, click "↻ Nudge" in the undo zone → new pending draft kind='nudge' appears in Pending Review with a sensible subject + body, no pricing leaks. The previously paused draft is now status='rejected' reason 'Superseded by nudge draft'. AuditLog has 'queue.nudge-generated' with supersededCount=1.
+2. On lead B with a sent cold draft 11+ days old and no pending/paused/approved drafts and no recent nudge, /queue shows lead B in the "💤 Sent — awaiting reply" section with "Last sent 11 days ago". Click Nudge → new pending nudge appears, lead B disappears from the awaiting-reply section. AuditLog 'queue.nudge-generated' with supersededCount=0.
+3. Lead with doNotContact=true does not appear in awaiting-reply, and direct POST /nudge/:leadId redirects without creating a draft and writes 'draftNudge.do-not-contact'.
 
 ---
 
@@ -1280,6 +1393,58 @@ STOP.
 ```
 
 **Acceptance:** Create a test HubSpot deal associated with a synced Lead. Hit `/prep-brief/{dealId}?pw=...` → markdown-rendered HTML page appears with all 7 sections populated, including signals-based data points. Hit `?pw=...&send=email` → brief arrives at BRIEF_RECIPIENT.
+
+---
+
+### Prompt 9.5 — Signal-triggered upsell cron (NEW)
+
+```
+Create ONLY src/prompts/upsell.ts, src/outreach/draftUpsell.ts, AND src/scripts/draftUpsellBatch.ts. No UI button — drafts surface in /queue automatically because kind='upsell' is rendered by the existing pending section.
+
+src/prompts/upsell.ts:
+Export UPSELL_SYSTEM:
+"Write a short, warm congratulation + upsell hook to a Sobriety Select customer who has shown a NEW growth signal (hiring, expansion, missing from competing directories, expanded tech stack). Open with a specific congratulation tied to the signal. Pivot to ONE upsell angle that fits: SEO if missing from directories, PPC/Premium if scaling, account expansion if hiring intake. End with a soft ask ('want 10 min to talk about scaling this listing alongside your growth?'). 70 words max. No price, no tier names, no fluff.
+
+Output ONLY valid JSON. No preamble, no markdown fences. Schema: { \"subject\": string, \"body\": string }"
+
+Export buildUpsellUser(lead, enrichment, signalSummary): string. signalSummary is a one-liner like 'hiring 2 intake coordinators in Asheville' or 'missing from PT + Rehabs.com' or 'high-spend tech stack (CallRail + HubSpot, score 4)'.
+
+src/outreach/draftUpsell.ts:
+Export draftUpsell(leadId: string, signalSummary: string): Promise<string | null>.
+
+Mirror the setup from draftCold.ts/draftNudge.ts.
+
+Flow:
+1. Fetch lead include enrichment. Return null if missing.
+2. doNotContact gate.
+3. recent = prisma.draft.findFirst where leadId, kind='upsell', createdAt > now - 60d. If non-null → audit('draftUpsell.recent-exists'), return null.
+4. Single Claude call: sonnet-4-5, temp 0.6, max 512, cached(UPSELL_SYSTEM), buildUpsellUser(lead, enrichment, signalSummary).
+5. extractJSON + zod {subject, body}.
+6. scanLeaks → on hit, audit('draftUpsell.leak-detected', { hits }), return null.
+7. prisma.draft.create kind='upsell', status='pending', subject, body, specificFacts=[signalSummary], personalizationPct=null. Return draft.id.
+
+src/scripts/draftUpsellBatch.ts:
+Cron entry. Cap MAX_DRAFTS_PER_RUN = 5.
+
+Flow:
+1. Query HubSpot for closed-won deals with associated companies. Use hs.crm.deals.searchApi.doSearch filter dealstage='closedwon', properties=['dealname','hubspot_owner_id'], request associations=['companies']. Wrap with hsRetry. Paginate, cap candidates at 200.
+2. Build a Set of associated companyIds across all closed-won deals.
+3. prisma.lead.findMany where hubspotCompanyId IN companyIds, include enrichment. Skip if enrichment is null.
+4. For each lead, derive signalSummary from enrichment.signals (Json — narrow with zod, mirror SignalsSchema in src/ui/queue.ts). Priority order:
+   - signals.hiring?.active === true → `hiring ${signals.hiring.roleTitles?.[0] ?? 'staff'} in ${lead.city}`
+   - signals.competingDirectories?.missingFromAll === true → 'missing from competing directories'
+   - signals.techStack?.bigSpenderScore >= 3 → `high-spend tech stack (score ${signals.techStack.bigSpenderScore})`
+   - else: skip lead.
+5. Call draftUpsell(leadId, signalSummary). Stop loop once MAX_DRAFTS_PER_RUN created.
+6. AuditLog action='cron.success' or 'cron.failure', entity='draftUpsellBatch', meta={ candidates, ok, skipped, fail }.
+7. console.log JSON summary.
+
+After this prompt: add `'0 8 * * *'  →  draftUpsellBatch  (outreach)` to the PRD §9.1 Daily Cron Schedule and to whatever runs your existing crons (Render cron job). 8:00 AM is unoccupied in the current schedule and runs after enrichAll (5:30) so signals are fresh.
+
+STOP.
+```
+
+**Acceptance:** Stage a `Lead` with `hubspotCompanyId` set, an associated closed-won HubSpot deal, and `enrichment.signals.hiring.active=true` with `signals.hiring.roleTitles=['intake coordinators']`. Run `tsx src/scripts/draftUpsellBatch.ts`. A pending draft with `kind='upsell'` appears in `/queue`, body congratulates on the hiring signal and includes a soft ask. Re-running within 60 days does NOT create a duplicate (audits `draftUpsell.recent-exists`). A lead with no qualifying signals is skipped silently.
 
 ---
 
