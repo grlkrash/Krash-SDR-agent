@@ -3,6 +3,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient, type Draft, type Enrichment, type Lead } from '@prisma/client';
 import { z } from 'zod';
 import { queueAuth } from '../middleware/queueAuth.js';
+import { draftNudge } from '../outreach/draftNudge.js';
 import { killLead } from '../outreach/killLead.js';
 import { logSentEmailToHubspot } from '../outreach/logSentEmail.js';
 
@@ -20,6 +21,11 @@ const DAY_MS = 86_400_000;
 // with a "Re-draft fresh" button that rejects the stale draft so
 // draftColdBatch picks the lead up cleanly on the next cron tick.
 const STALE_PAUSE_DAYS = 14;
+// A sent draft with no pending/approved/paused successor and no reply for
+// this many days is surfaced in the awaiting-reply section so Sonia can
+// fire a nudge with one click. Threshold chosen to give the prospect a
+// realistic window before we re-engage.
+const REPLY_SILENCE_DAYS = 10;
 
 const COMMISSION = { claimed: 60, select: 240, premium: 960 } as const;
 type Tier = keyof typeof COMMISSION;
@@ -84,6 +90,14 @@ const KillLeadBodySchema = z.object({
 const DEFAULT_KILL_REASON = 'no reason given';
 
 type DraftWithRel = Draft & { lead: Lead & { enrichment: Enrichment | null } };
+
+// Shape returned by the awaiting-reply lead.findMany — the included `drafts`
+// slice contains AT MOST one row (the most recent sent draft), filtered by
+// the where clause in the query.
+type AwaitingReplyLead = Lead & {
+  enrichment: Enrichment | null;
+  drafts: Array<{ sentAt: Date | null; kind: string }>;
+};
 
 const escapeHtml = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => {
@@ -213,14 +227,16 @@ const renderPauseForm = (d: DraftWithRel): string =>
 // contact's hs_lead_status to UNQUALIFIED. Uses an HTML prompt() in JS so
 // Sonia can type a reason at click time; the reason goes into AuditLog +
 // the cancelled drafts' rejectReason.
-const renderKillLeadForm = (d: DraftWithRel): string =>
-  `<form method="POST" action="/kill-lead/${encodeURIComponent(d.lead.id)}" style="display:inline" onsubmit="return killLeadPrompt(this)">
+const renderKillLeadFormById = (leadId: string): string =>
+  `<form method="POST" action="/kill-lead/${encodeURIComponent(leadId)}" style="display:inline" onsubmit="return killLeadPrompt(this)">
       <input type="hidden" name="reason" value="" />
       <button type="submit" class="btn-kill"
         title="Stop ALL outreach for this lead and tell HubSpot the contact is unqualified">
         Kill lead
       </button>
     </form>`;
+
+const renderKillLeadForm = (d: DraftWithRel): string => renderKillLeadFormById(d.lead.id);
 
 const renderPendingCard = (d: DraftWithRel): string => {
   const subject = d.subject ?? '';
@@ -300,6 +316,11 @@ const truncate = (s: string, max: number): string =>
 const isStalePaused = (d: DraftWithRel): boolean =>
   d.status === 'paused' && Date.now() - d.createdAt.getTime() > STALE_PAUSE_DAYS * DAY_MS;
 
+const renderNudgeFormForPaused = (leadId: string): string =>
+  `<form method="POST" action="/nudge/${encodeURIComponent(leadId)}" style="display:inline" onsubmit="return confirm('Generate a nudge draft for this lead? The current paused draft will be archived.')">
+        <button type="submit" class="btn-undo" style="background:#0d9488" title="Generate a nudge draft from a fresh angle">↻ Nudge</button>
+      </form>`;
+
 const renderUndoRow = (d: DraftWithRel): string => {
   const statusClass = d.status === 'paused' ? 'status-paused' : 'status-rejected';
   const reason = d.rejectReason ?? '';
@@ -314,6 +335,10 @@ const renderUndoRow = (d: DraftWithRel): string => {
     : `<form method="POST" action="/undo/${encodeURIComponent(d.id)}" style="display:inline">
         <button type="submit" class="btn-undo" title="Restore to pending">↩ Undo</button>
       </form>`;
+  // Nudge is offered on every paused row regardless of stale/fresh — both
+  // surfaces (paused-undo + awaiting-reply) write to the same POST /nudge
+  // route, which archives the paused draft as 'Superseded by nudge draft'.
+  const nudgeForm = d.status === 'paused' ? renderNudgeFormForPaused(d.lead.id) : '';
   return `
   <div class="undo-row">
     <div class="undo-info">
@@ -324,7 +349,33 @@ const renderUndoRow = (d: DraftWithRel): string => {
     </div>
     <div class="undo-actions">
       ${restoreForm}
+      ${nudgeForm}
       ${renderKillLeadForm(d)}
+    </div>
+  </div>`;
+};
+
+// Row for the "💤 Sent — awaiting reply" section. The lead has a sent draft
+// older than REPLY_SILENCE_DAYS with no active successor and no recent nudge.
+// One click on Nudge generates a fresh follow-up; the old sent draft stays
+// untouched (no paused→rejected supersede happens on this surface, the
+// updateMany in POST /nudge is a no-op when nothing is paused).
+const renderAwaitingReplyRow = (lead: AwaitingReplyLead): string => {
+  const sentAt = lead.drafts[0]?.sentAt ?? null;
+  const daysAgoLabel = sentAt === null
+    ? 'Last sent: unknown'
+    : `Last sent ${Math.floor((Date.now() - sentAt.getTime()) / DAY_MS)} days ago`;
+  return `
+  <div class="undo-row">
+    <div class="undo-info">
+      <span class="lead-name-sm">${escapeHtml(lead.name)}</span>
+      <span class="undo-meta">${escapeHtml(lead.city)}, ${escapeHtml(lead.state)} · ${escapeHtml(daysAgoLabel)}</span>
+    </div>
+    <div class="undo-actions">
+      <form method="POST" action="/nudge/${encodeURIComponent(lead.id)}" style="display:inline" onsubmit="return confirm('Generate a nudge draft for this lead?')">
+        <button type="submit" class="btn-undo" style="background:#0d9488" title="Generate a follow-up nudge">↻ Nudge</button>
+      </form>
+      ${renderKillLeadFormById(lead.id)}
     </div>
   </div>`;
 };
@@ -462,9 +513,11 @@ const HOLD_SCRIPT = `
 const renderPage = (
   pending: DraftWithRel[],
   approved: DraftWithRel[],
+  awaitingReply: AwaitingReplyLead[],
   pausedRejected: DraftWithRel[],
   totalPending: number,
   totalApproved: number,
+  totalAwaitingReply: number,
   totalPausedRejected: number,
   sortMode: 'newest' | 'value',
 ): string => {
@@ -478,6 +531,16 @@ const renderPage = (
     approved.length === 0
       ? '<div class="section-empty">Nothing waiting to send.</div>'
       : approved.map((d) => renderApprovedCard(d)).join('\n');
+  // Mirror the undo-section pattern: hide entirely when empty so the page
+  // stays calm when there's nothing to act on.
+  const awaitingReplySection =
+    totalAwaitingReply === 0
+      ? ''
+      : `
+  <section class="queue-section" id="awaiting-reply">
+    <h2 class="section-title">💤 Sent — awaiting reply ${REPLY_SILENCE_DAYS}+ days <span class="count">(${totalAwaitingReply})</span></h2>
+    ${awaitingReply.map((l) => renderAwaitingReplyRow(l)).join('\n')}
+  </section>`;
   // Hide the undo section entirely when nothing is paused/rejected — it's a
   // tool that's only relevant when there's something to fix.
   const undoSection =
@@ -488,6 +551,14 @@ const renderPage = (
     <h2 class="section-title">🗄 Recently paused / rejected <span class="count">(${totalPausedRejected})</span></h2>
     ${pausedRejected.map((d) => renderUndoRow(d)).join('\n')}
   </section>`;
+  const awaitingReplyMeta =
+    totalAwaitingReply > 0
+      ? ` · <a href="#awaiting-reply">${totalAwaitingReply} awaiting reply</a>`
+      : '';
+  const undoMeta =
+    totalPausedRejected > 0
+      ? ` · <a href="#undo-zone">${totalPausedRejected} to undo ↓</a>`
+      : '';
 
   return `<!doctype html>
 <html lang="en">
@@ -499,7 +570,7 @@ const renderPage = (
 </head>
 <body>
   <h1>Approval Queue</h1>
-  <div class="top-meta">${totalPending} pending · ${totalApproved} approved &amp; ready to send${totalPausedRejected > 0 ? ` · <a href="#undo-zone">${totalPausedRejected} to undo ↓</a>` : ''}</div>
+  <div class="top-meta">${totalPending} pending · ${totalApproved} approved &amp; ready to send${awaitingReplyMeta}${undoMeta}</div>
   <div class="toolbar">
     <form method="get" action="/queue">
       <label for="sort">Sort pending:</label>
@@ -521,7 +592,7 @@ const renderPage = (
   <section class="queue-section">
     <h2 class="section-title">✉️ Approved — ready to send <span class="count">(${totalApproved})</span></h2>
     ${approvedCards}
-  </section>${undoSection}
+  </section>${awaitingReplySection}${undoSection}
   <script>${KILL_LEAD_SCRIPT}</script>
   <script>${HOLD_SCRIPT}</script>
 </body>
@@ -539,49 +610,114 @@ queueRouter.use(express.urlencoded({ extended: false }));
 
 queueRouter.get('/queue', queueAuth, async (req, res) => {
   const sortMode: 'newest' | 'value' = req.query.sort === 'value' ? 'value' : 'newest';
-  // Three separate fetches so each section is paged independently and one
-  // status can't crowd out another under FETCH_CAP. Approved + paused/rejected
-  // are always newest-first; the value-sort dropdown only re-ranks pending.
-  const [pendingRows, approvedRows, pausedRejectedRows, totalPending, totalApproved, totalPausedRejected] =
-    await Promise.all([
-      prisma.draft.findMany({
-        where: { status: 'pending' },
-        orderBy: { createdAt: 'desc' },
-        take: FETCH_CAP,
-        include: { lead: { include: { enrichment: true } } },
-      }),
-      prisma.draft.findMany({
-        where: { status: 'approved' },
-        orderBy: { createdAt: 'desc' },
-        take: FETCH_CAP,
-        include: { lead: { include: { enrichment: true } } },
-      }),
-      prisma.draft.findMany({
-        where: { status: { in: ['paused', 'rejected'] } },
-        orderBy: { createdAt: 'desc' },
-        take: FETCH_CAP,
-        include: { lead: { include: { enrichment: true } } },
-      }),
-      prisma.draft.count({ where: { status: 'pending' } }),
-      prisma.draft.count({ where: { status: 'approved' } }),
-      prisma.draft.count({ where: { status: { in: ['paused', 'rejected'] } } }),
-    ]);
+  // Awaiting-reply window: any lead whose most-recent activity is a sent
+  // draft >= REPLY_SILENCE_DAYS old, with no active successor (pending /
+  // approved / paused) AND no recent nudge inside the same window. Once
+  // Sonia clicks Nudge, a new pending draft lands in the window-excluding
+  // set so the lead drops out of this section.
+  const tenDaysAgoMs = Date.now() - REPLY_SILENCE_DAYS * DAY_MS;
+  const tenDaysAgo = new Date(tenDaysAgoMs);
+  // Four section fetches + three counts so each section is paged independently
+  // and one status can't crowd out another under FETCH_CAP. Approved +
+  // paused/rejected are always newest-first; the value-sort dropdown only
+  // re-ranks pending; awaiting-reply ranks oldest-silence first (sorted in JS
+  // below from the included drafts slice).
+  const [
+    pendingRows,
+    approvedRows,
+    pausedRejectedRows,
+    awaitingReplyRows,
+    totalPending,
+    totalApproved,
+    totalPausedRejected,
+    totalAwaitingReply,
+  ] = await Promise.all([
+    prisma.draft.findMany({
+      where: { status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+      take: FETCH_CAP,
+      include: { lead: { include: { enrichment: true } } },
+    }),
+    prisma.draft.findMany({
+      where: { status: 'approved' },
+      orderBy: { createdAt: 'desc' },
+      take: FETCH_CAP,
+      include: { lead: { include: { enrichment: true } } },
+    }),
+    prisma.draft.findMany({
+      where: { status: { in: ['paused', 'rejected'] } },
+      orderBy: { createdAt: 'desc' },
+      take: FETCH_CAP,
+      include: { lead: { include: { enrichment: true } } },
+    }),
+    prisma.lead.findMany({
+      where: {
+        doNotContact: false,
+        drafts: {
+          some: { status: 'sent' },
+          none: {
+            OR: [
+              { status: { in: ['pending', 'approved', 'paused'] } },
+              { status: 'sent', sentAt: { gt: tenDaysAgo } },
+              { kind: 'nudge', createdAt: { gt: tenDaysAgo } },
+            ],
+          },
+        },
+      },
+      include: {
+        enrichment: true,
+        drafts: {
+          where: { status: 'sent' },
+          orderBy: { sentAt: 'desc' },
+          take: 1,
+          select: { sentAt: true, kind: true },
+        },
+      },
+      take: FETCH_CAP,
+    }),
+    prisma.draft.count({ where: { status: 'pending' } }),
+    prisma.draft.count({ where: { status: 'approved' } }),
+    prisma.draft.count({ where: { status: { in: ['paused', 'rejected'] } } }),
+    prisma.lead.count({
+      where: {
+        doNotContact: false,
+        drafts: {
+          some: { status: 'sent' },
+          none: {
+            OR: [
+              { status: { in: ['pending', 'approved', 'paused'] } },
+              { status: 'sent', sentAt: { gt: tenDaysAgo } },
+              { kind: 'nudge', createdAt: { gt: tenDaysAgo } },
+            ],
+          },
+        },
+      },
+    }),
+  ]);
   const orderedPending =
     sortMode === 'value'
       ? [...pendingRows].sort((a, b) => commissionForDraft(b) - commissionForDraft(a))
       : pendingRows;
+  // Oldest silence first — the lead that's been waiting longest is the most
+  // urgent nudge candidate. Defensive: sentAt is nullable in the schema even
+  // though status='sent' filter implies it's set.
+  const sentAtMs = (l: AwaitingReplyLead): number => l.drafts[0]?.sentAt?.getTime() ?? 0;
+  const orderedAwaitingReply = [...awaitingReplyRows].sort((a, b) => sentAtMs(a) - sentAtMs(b));
   const visiblePending = orderedPending.slice(0, PAGE_SIZE);
   const visibleApproved = approvedRows.slice(0, PAGE_SIZE);
   const visiblePausedRejected = pausedRejectedRows.slice(0, PAGE_SIZE);
+  const visibleAwaitingReply = orderedAwaitingReply.slice(0, PAGE_SIZE);
   res
     .type('html')
     .send(
       renderPage(
         visiblePending,
         visibleApproved,
+        visibleAwaitingReply,
         visiblePausedRejected,
         totalPending,
         totalApproved,
+        totalAwaitingReply,
         totalPausedRejected,
         sortMode,
       ),
@@ -787,6 +923,43 @@ queueRouter.post('/redraft/:id', queueAuth, async (req, res) => {
         leadId: existing.leadId,
         ageDays: Math.floor((Date.now() - existing.createdAt.getTime()) / DAY_MS),
       },
+    },
+  });
+  res.redirect(303, '/queue');
+});
+
+// Shared nudge entrypoint for both surfaces:
+//   - awaiting-reply row: a sent cold draft >= REPLY_SILENCE_DAYS old with no
+//     active successor. The updateMany is a no-op (no paused drafts) and the
+//     original sent draft stays untouched.
+//   - paused-undo row: a manually paused draft. The updateMany rejects every
+//     paused draft on this lead as 'Superseded by nudge draft' so the new
+//     pending nudge becomes the single active draft.
+// draftNudge handles the doNotContact short-circuit + audit and returns null
+// on any skip path (missing lead/enrichment, no prior thread to mirror tone
+// from, leak detected); we redirect with ?nudge=skipped so the operator can
+// see in the URL that nothing was generated.
+queueRouter.post('/nudge/:leadId', queueAuth, async (req, res) => {
+  const leadId = req.params.leadId;
+  if (typeof leadId !== 'string' || leadId === '') {
+    res.status(400).json({ error: 'invalid leadId' });
+    return;
+  }
+  const newId = await draftNudge(leadId);
+  if (newId === null) {
+    res.redirect(303, '/queue?nudge=skipped');
+    return;
+  }
+  const { count } = await prisma.draft.updateMany({
+    where: { leadId, status: 'paused' },
+    data: { status: 'rejected', rejectReason: 'Superseded by nudge draft' },
+  });
+  await prisma.auditLog.create({
+    data: {
+      action: 'queue.nudge-generated',
+      entity: 'Lead',
+      entityId: leadId,
+      meta: { newDraftId: newId, supersededCount: count },
     },
   });
   res.redirect(303, '/queue');
