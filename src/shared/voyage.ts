@@ -3,8 +3,8 @@ import 'dotenv/config';
 const VOYAGE_API_URL = 'https://api.voyageai.com/v1/embeddings';
 const VOYAGE_MODEL = 'voyage-3';
 const RETRY_STATUSES = new Set([429, 502, 503]);
-const BASE_BACKOFF_MS = 20_000;
-const MAX_BACKOFF_MS = 60_000;
+const BASE_BACKOFF_MS = 1_000;
+const MAX_BACKOFF_MS = 30_000;
 const MAX_ATTEMPTS = 5;
 
 interface VoyageEmbeddingResponse {

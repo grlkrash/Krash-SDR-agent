@@ -12,14 +12,10 @@ const KB_DIR = join(process.cwd(), 'kb');
 const TARGET_CHARS = 2400; // ~600 tokens at ~4 chars/token
 const OVERLAP_CHARS = 400; // ~100 tokens
 const EMBED_BATCH_SIZE = 20;
-const PACING_MS = 21_000; // Voyage free tier: 3 RPM without billing method
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
 });
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
 
 // --- File walking ---
 
@@ -89,7 +85,6 @@ if (files.length === 0) {
 
 let totalChunks = 0;
 let totalFiles = 0;
-let isFirstEmbed = true;
 
 for (const absPath of files) {
   const docPath = relative(process.cwd(), absPath); // e.g. "kb/product/listing-tiers.md"
@@ -106,9 +101,6 @@ for (const absPath of files) {
 
   // Embed in batches of EMBED_BATCH_SIZE.
   for (let b = 0; b < chunks.length; b += EMBED_BATCH_SIZE) {
-    if (!isFirstEmbed) await sleep(PACING_MS);
-    isFirstEmbed = false;
-
     const batchChunks = chunks.slice(b, b + EMBED_BATCH_SIZE);
     const vectors = await embed(batchChunks);
 
