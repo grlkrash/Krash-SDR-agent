@@ -1,21 +1,34 @@
-// Prep-brief router.
+// Prep-brief router (Prompt 9.4).
 //
-// This module currently exposes only GET /prep-brief/lookup, which the
-// approval-queue card links to. It resolves a HubSpot company → first
-// associated deal and 302s to /prep-brief/{dealId}. The detail route
-// (/prep-brief/:dealId) is owned by Prompt 9.4 and will be added here later.
+// Two routes, both behind queueAuth:
 //
-// Auth: cookie-based per Security Prompt S.1 — we use queueAuth (the
-// cookie-aware middleware) so the link can be opened in a new tab without a
-// ?pw= query string. queueAuth still falls back to header/query for tooling.
+//   GET /prep-brief/lookup?companyId=...
+//     Resolves a HubSpot company → first associated deal and 302s to
+//     /prep-brief/{dealId}. The approval-queue card links here so Sonia
+//     can open a brief without first looking up the dealId.
+//
+//   GET /prep-brief/:dealId
+//     Runs generatePrepBriefWithLead, then either:
+//       - ?send=email  → ships the markdown to BRIEF_RECIPIENT via Gmail
+//                        and renders a small confirmation page, or
+//       - default      → renders a print-friendly HTML page with the
+//                        markdown converted inline (no deps — see
+//                        renderMarkdown below).
+//
+// Auth: cookie-based per Security Prompt S.1 — queueAuth refreshes the qpw
+// cookie on every successful auth, so a fresh tab opened from the queue
+// card works without a ?pw= round trip.
 //
 // Association API: HubSpot's v3 associationsApi was removed in
 // @hubspot/api-client v13.5.0, so we use hs.crm.associations.v4.basicApi
-// (same fix as Phase 4.3 used for the company↔contact write path).
+// (same fix Phase 4.3 applied to the company↔contact write path). The
+// outreach module does the rest of the v4 fetches.
 
 import express from 'express';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import { queueAuth } from '../middleware/queueAuth.js';
+import { generatePrepBriefWithLead } from '../outreach/prepBrief.js';
+import { sendEmail } from '../shared/gmail.js';
 
 const PAGE_STYLE =
   "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:80px auto;padding:24px;text-align:center;color:#111;";
@@ -66,6 +79,171 @@ const readCompanyId = (req: express.Request): string | null => {
   return raw.trim();
 };
 
+// Inline markdown → HTML. Covers exactly what PREP_BRIEF_SYSTEM emits:
+// ## h2 headers, - / * bullet lists, 1. ordered lists, **bold**, *italic*,
+// _italic_, `inline code`, blockquotes (>), paragraphs. Escapes first, then
+// applies inline transforms so the model can't smuggle raw HTML through.
+// Anything more elaborate (links, images, tables) we'd want a real parser
+// for — PRD §6 keeps the surface tiny so we don't pull one in for this.
+const renderInline = (s: string): string => {
+  const esc = escapeHtml(s);
+  return esc
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^\w*])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
+    .replace(/(^|[^\w_])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
+};
+
+const HEADING_RX = /^(#{1,6})\s+(.*)$/;
+// `•` (Unicode bullet) is included alongside the canonical `-`/`*` markers
+// because Claude consistently emits `• ` for bullet lists in the prep brief
+// even when the prompt asks for markdown. Treating it as a UL marker keeps
+// the rendered HTML pretty without bullying the model into different output.
+const UL_RX = /^[-*•]\s+(.*)$/;
+const OL_RX = /^\d+\.\s+(.*)$/;
+const BLOCKQUOTE_RX = /^>\s?(.*)$/;
+
+type ListState = 'ul' | 'ol' | null;
+
+const renderMarkdown = (md: string): string => {
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  let list: ListState = null;
+
+  const closeList = (): void => {
+    if (list === 'ul') out.push('</ul>');
+    else if (list === 'ol') out.push('</ol>');
+    list = null;
+  };
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    if (line === '') {
+      closeList();
+      continue;
+    }
+    const heading = line.match(HEADING_RX);
+    if (heading !== null) {
+      closeList();
+      const level = heading[1].length;
+      out.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
+      continue;
+    }
+    const ulMatch = line.match(UL_RX);
+    if (ulMatch !== null) {
+      if (list !== 'ul') {
+        closeList();
+        out.push('<ul>');
+        list = 'ul';
+      }
+      out.push(`<li>${renderInline(ulMatch[1])}</li>`);
+      continue;
+    }
+    const olMatch = line.match(OL_RX);
+    if (olMatch !== null) {
+      if (list !== 'ol') {
+        closeList();
+        out.push('<ol>');
+        list = 'ol';
+      }
+      out.push(`<li>${renderInline(olMatch[1])}</li>`);
+      continue;
+    }
+    const bqMatch = line.match(BLOCKQUOTE_RX);
+    if (bqMatch !== null) {
+      closeList();
+      out.push(`<blockquote>${renderInline(bqMatch[1])}</blockquote>`);
+      continue;
+    }
+    closeList();
+    out.push(`<p>${renderInline(line)}</p>`);
+  }
+  closeList();
+  return out.join('\n');
+};
+
+// Print-friendly styling. Sonia opens this 5 minutes before a call — small
+// typography, generous line-height, narrow column. Print rules strip the
+// fixed max-width so a paper printout uses the full page.
+const BRIEF_PAGE_CSS = `
+  :root { color-scheme: light; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; background: #fafafa; margin: 0; padding: 32px 16px; }
+  .brief { max-width: 760px; margin: 0 auto; background: #ffffff; padding: 32px 40px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); line-height: 1.55; font-size: 15px; }
+  .brief h1, .brief h2, .brief h3 { line-height: 1.25; margin: 24px 0 8px; }
+  .brief h1 { font-size: 22px; }
+  .brief h2 { font-size: 18px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+  .brief h3 { font-size: 16px; }
+  .brief p { margin: 8px 0; }
+  .brief ul, .brief ol { margin: 8px 0 12px; padding-left: 24px; }
+  .brief li { margin: 4px 0; }
+  .brief code { background: #f4f4f5; padding: 1px 4px; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .brief blockquote { border-left: 3px solid #ddd; margin: 8px 0; padding: 4px 12px; color: #555; }
+  .brief strong { font-weight: 600; }
+  .meta { max-width: 760px; margin: 0 auto 16px; display: flex; justify-content: space-between; align-items: center; color: #6b7280; font-size: 12px; }
+  .meta a { color: #2563eb; text-decoration: none; }
+  .meta a:hover { text-decoration: underline; }
+  @media print {
+    body { background: #ffffff; padding: 0; }
+    .meta { display: none; }
+    .brief { box-shadow: none; border-radius: 0; max-width: none; padding: 0; }
+  }
+`;
+
+const renderBriefPage = (
+  dealId: string,
+  leadName: string,
+  markdown: string,
+): string => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Prep brief: ${escapeHtml(leadName)}</title>
+<style>${BRIEF_PAGE_CSS}</style>
+</head>
+<body>
+  <div class="meta">
+    <span>Deal ${escapeHtml(dealId)}</span>
+    <span><a href="?send=email">📧 Email to me</a> &middot; <a href="javascript:window.print()">🖨 Print</a></span>
+  </div>
+  <article class="brief">${renderMarkdown(markdown)}</article>
+</body>
+</html>`;
+
+const renderEmailSent = (
+  recipient: string,
+  leadName: string,
+): string => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Prep brief sent</title>
+</head>
+<body style="${PAGE_STYLE}">
+  <h1 style="font-size:18px;margin:0 0 12px;">📧 Prep brief sent.</h1>
+  <p style="color:#374151;font-size:14px;line-height:1.6;">
+    Delivered to <strong>${escapeHtml(recipient)}</strong> for <strong>${escapeHtml(leadName)}</strong>.
+  </p>
+  <p style="margin-top:24px;font-size:13px;">
+    <a href="?" style="color:#2563eb;text-decoration:none;">← View brief in browser</a>
+  </p>
+</body>
+</html>`;
+
+const renderError = (title: string, detail: string): string => `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>${escapeHtml(title)}</title>
+</head>
+<body style="${PAGE_STYLE}">
+  <h1 style="font-size:18px;margin:0 0 12px;">${escapeHtml(title)}</h1>
+  <p style="color:#374151;font-size:14px;line-height:1.5;">${escapeHtml(detail)}</p>
+</body>
+</html>`;
+
 export const prepBriefRouter = express.Router();
 
 prepBriefRouter.get('/prep-brief/lookup', queueAuth, async (req, res) => {
@@ -83,4 +261,45 @@ prepBriefRouter.get('/prep-brief/lookup', queueAuth, async (req, res) => {
     return;
   }
   res.redirect(302, `/prep-brief/${encodeURIComponent(dealId)}`);
+});
+
+prepBriefRouter.get('/prep-brief/:dealId', queueAuth, async (req, res) => {
+  // Express 5 types route params as `string | string[]` to accommodate the
+  // optional repeating-segment syntax. Our route uses a single segment, so
+  // we narrow defensively and reject anything that arrives as an array.
+  const rawDealId = req.params.dealId;
+  const dealId = typeof rawDealId === 'string' ? rawDealId.trim() : '';
+  if (dealId === '') {
+    res.status(400).type('html').send(renderError('Missing dealId', 'Provide a HubSpot deal id in the URL.'));
+    return;
+  }
+  let result;
+  try {
+    result = await generatePrepBriefWithLead(dealId);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    res.status(500).type('html').send(renderError('Could not generate prep brief', detail));
+    return;
+  }
+  const { markdown, leadName } = result;
+
+  if (req.query.send === 'email') {
+    const recipient = process.env.BRIEF_RECIPIENT ?? '';
+    if (recipient === '') {
+      res
+        .status(500)
+        .type('html')
+        .send(renderError('BRIEF_RECIPIENT is not set', 'Set BRIEF_RECIPIENT in the environment to enable email delivery.'));
+      return;
+    }
+    await sendEmail({
+      to: recipient,
+      subject: `Prep brief: ${leadName}`,
+      body: markdown,
+    });
+    res.type('html').send(renderEmailSent(recipient, leadName));
+    return;
+  }
+
+  res.type('html').send(renderBriefPage(dealId, leadName, markdown));
 });
