@@ -1,6 +1,6 @@
 // tsx src/scripts/syncToHubspot.ts
 //
-// Sync every enriched lead that hasn't been mirrored to HubSpot yet.
+// Cron entry (5:45 AM ET): sync every enriched lead not yet mirrored to HubSpot.
 // Concurrency 5; the per-call 100ms pacing and hsRetry live inside
 // syncLeadToHubspot, so this script just orchestrates.
 

@@ -10,6 +10,10 @@
 - **Deployment on Railway.** One web service + one Postgres plugin + one cron service (`cronTick` every 5 min UTC, dispatches PRD §9.1 jobs in Eastern time). See `RAILWAY.md` and `railway.toml`. Cheaper than 16 separate cron services.
 - **`refreshIntentSignals` implemented (§9.12).** Monday 4 AM ET cron refreshes Places ratings + hiring signals on top open deals; hiring flips audit `intent.hiring-spike` for the daily brief.
 
+**Changes from v1.2 (continued):**
+
+- **`syncToHubspot` on daily cron (5:45 AM ET).** Runs after `enrichAll` so new enrichments mirror to HubSpot before scoring and drafting.
+
 **Changes from v1.1:**
 
 - Added three high-value enrichment signals: competing-directory presence (Psychology Today, Rehabs.com, Recovery.com), LinkedIn hiring activity, and marketing tech stack detection (HubSpot/Salesforce/CallRail tags found in HTML)
@@ -325,6 +329,7 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 |--------------|---------|----------------------|--------|
 |`0 5 * * *`   |5:00 AM  |`dailyScrape`         |pipeline|
 |`30 5 * * *`  |5:30 AM  |`enrichAll`           |pipeline|
+|`45 5 * * *`  |5:45 AM  |`syncToHubspot`       |pipeline|
 |`0 6 * * *`   |6:00 AM  |`scorePipeline`       |pipeline|
 |`30 6 * * *`  |6:30 AM  |`draftColdBatch`      |outreach|
 |`0 7 * * *`   |7:00 AM  |`draftFollowups`      |outreach|

@@ -14,6 +14,8 @@ One cron service is cheaper than 14 separate Railway services. `src/scripts/cron
 
 **Reply detection:** `checkReplies` runs on **every** 5-minute tick (~5 min latency). No second cron service needed. Gmail lookback is `newer_than:15m` for overlap if a tick is skipped.
 
+**Daily pipeline order (ET):** `dailyScrape` 5:00 → `enrichAll` 5:30 → **`syncToHubspot` 5:45** → `scorePipeline` 6:00 → `draftColdBatch` 6:30 → … (see `src/shared/cronSchedule.ts`). HubSpot sync is **not** manual-only anymore.
+
 ## 1. Create Railway project
 
 1. [railway.com](https://railway.com) → **New Project** → **Deploy from GitHub repo** → select `Krash-SDR-agent`.

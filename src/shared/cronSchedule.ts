@@ -20,6 +20,7 @@ export type CronJobDef = {
 export const CRON_JOBS: CronJobDef[] = [
   { name: 'dailyScrape', kind: 'daily', etHour: 5, etMinute: 0, modulePath: './dailyScrape.js', enabled: true },
   { name: 'enrichAll', kind: 'daily', etHour: 5, etMinute: 30, modulePath: './enrichAll.js', enabled: true },
+  { name: 'syncToHubspot', kind: 'daily', etHour: 5, etMinute: 45, modulePath: './syncToHubspot.js', enabled: true },
   { name: 'scorePipeline', kind: 'daily', etHour: 6, etMinute: 0, modulePath: './scorePipeline.js', enabled: true },
   { name: 'draftColdBatch', kind: 'daily', etHour: 6, etMinute: 30, modulePath: './draftColdBatch.js', enabled: true },
   { name: 'draftFollowups', kind: 'daily', etHour: 7, etMinute: 0, modulePath: './draftFollowups.js', enabled: false },
