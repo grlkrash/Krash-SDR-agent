@@ -20,11 +20,13 @@ One cron service is cheaper than 14 separate Railway services. `src/scripts/cron
 
 ## 2. Web service (`ssa-web`)
 
-Settings → **Build**:
+Settings → **Build** (or use `railway.toml` — Nixpacks runs `npm ci` first, then):
 
 ```bash
-npm install && npx prisma generate && npm run build && npx playwright install --with-deps chromium
+npx prisma generate && npm run build && npx playwright install --with-deps chromium
 ```
+
+`DATABASE_URL` is **not** required at build time (`prisma.config.ts` uses a placeholder for `generate`). It **is** required at runtime on both web and cron services: `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
 
 Settings → **Deploy** → Start command:
 
@@ -138,6 +140,14 @@ These stay `enabled: false` in `src/shared/cronSchedule.ts` until their scripts 
 - `dropVoicemails`
 
 `refreshGoogleSignals` runs Mondays 4:00 AM ET via `refreshIntentSignals`.
+
+## Build troubleshooting
+
+| Error | Fix |
+| --- | --- |
+| `PrismaConfigEnvError: Cannot resolve environment variable: DATABASE_URL` | Pull latest `main` — `prisma.config.ts` no longer requires a real URL at build time. Redeploy. |
+| `UndefinedVar: $NIXPACKS_PATH` | Railway/Nixpacks lint warning in generated Dockerfile — usually harmless if the build continues. |
+| Build succeeds but `/health` fails | Set runtime `DATABASE_URL`, run `CREATE EXTENSION vector`, check HubSpot/Claude keys. |
 
 ## Manual one-off runs
 

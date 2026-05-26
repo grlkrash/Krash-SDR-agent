@@ -4,7 +4,9 @@
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install && npx prisma generate && npm run build && npx playwright install --with-deps chromium"
+# Nixpacks already runs npm ci; omit npm install to avoid duplicate installs.
+# DATABASE_URL may be unset at build time — prisma.config.ts uses a placeholder for generate.
+buildCommand = "npx prisma generate && npm run build && npx playwright install --with-deps chromium"
 
 [deploy]
 startCommand = "npm run start:web"
