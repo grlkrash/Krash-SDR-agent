@@ -33,6 +33,19 @@ const PlaceMetaSchema = z.object({ id: z.string().optional() }).passthrough();
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
+const isHubSpotNotFound = (err: unknown): boolean => {
+  if (typeof err !== 'object' || err === null) return false;
+  const e = err as Record<string, unknown>;
+  if (e.code === 404) return true;
+  const response = e.response;
+  if (typeof response === 'object' && response !== null) {
+    const status = (response as Record<string, unknown>).status;
+    if (status === 404) return true;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes('404') || message.includes('x-hubspot-notfound');
+};
+
 export type RefreshIntentSummary = {
   dealsConsidered: number;
   leadsProcessed: number;
@@ -87,12 +100,17 @@ const topOpenDealIds = async (prisma: PrismaClient): Promise<Array<string>> => {
     .map((r) => r.hubspotDealId);
 };
 
-const isDealStillOpen = async (dealId: string): Promise<boolean> => {
-  const deal = await hsRetry(() =>
-    hs.crm.deals.basicApi.getById(dealId, ['dealstage']),
-  );
-  const stage = deal.properties.dealstage ?? '';
-  return stage !== '' && !CLOSED_STAGES.includes(stage);
+const isDealStillOpen = async (dealId: string): Promise<boolean | 'missing'> => {
+  try {
+    const deal = await hsRetry(() =>
+      hs.crm.deals.basicApi.getById(dealId, ['dealstage']),
+    );
+    const stage = deal.properties.dealstage ?? '';
+    return stage !== '' && !CLOSED_STAGES.includes(stage);
+  } catch (err) {
+    if (isHubSpotNotFound(err)) return 'missing';
+    throw err;
+  }
 };
 
 const extractPlaceId = (source: string, sourceMeta: Prisma.JsonValue): string | null => {
@@ -121,7 +139,8 @@ export const refreshIntentSignals = async (prisma: PrismaClient): Promise<Refres
 
   for (const dealId of dealIds) {
     try {
-      if (!(await isDealStillOpen(dealId))) {
+      const open = await isDealStillOpen(dealId);
+      if (open === 'missing' || open === false) {
         skipped += 1;
         continue;
       }
@@ -186,6 +205,10 @@ export const refreshIntentSignals = async (prisma: PrismaClient): Promise<Refres
 
       await sleep(PACING_MS);
     } catch (err) {
+      if (isHubSpotNotFound(err)) {
+        skipped += 1;
+        continue;
+      }
       fail += 1;
       await prisma.auditLog.create({
         data: {
