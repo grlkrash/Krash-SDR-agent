@@ -222,11 +222,10 @@ const renderKillLeadForm = (d: DraftWithRel): string =>
       </button>
     </form>`;
 
-const renderPendingCard = (d: DraftWithRel, pw: string): string => {
+const renderPendingCard = (d: DraftWithRel): string => {
   const subject = d.subject ?? '';
-  const pwQs = `?pw=${encodeURIComponent(pw)}`;
-  const approveAction = `/approve/${encodeURIComponent(d.id)}${pwQs}`;
-  const rejectAction = `/reject/${encodeURIComponent(d.id)}${pwQs}`;
+  const approveAction = `/approve/${encodeURIComponent(d.id)}`;
+  const rejectAction = `/reject/${encodeURIComponent(d.id)}`;
 
   return `
   <div class="card">
@@ -468,14 +467,13 @@ const renderPage = (
   totalApproved: number,
   totalPausedRejected: number,
   sortMode: 'newest' | 'value',
-  pw: string,
 ): string => {
   const newestSel = sortMode === 'newest' ? ' selected' : '';
   const valueSel = sortMode === 'value' ? ' selected' : '';
   const pendingCards =
     pending.length === 0
       ? '<div class="section-empty">No pending drafts. Nice work.</div>'
-      : pending.map((d) => renderPendingCard(d, pw)).join('\n');
+      : pending.map((d) => renderPendingCard(d)).join('\n');
   const approvedCards =
     approved.length === 0
       ? '<div class="section-empty">Nothing waiting to send.</div>'
@@ -504,7 +502,6 @@ const renderPage = (
   <div class="top-meta">${totalPending} pending · ${totalApproved} approved &amp; ready to send${totalPausedRejected > 0 ? ` · <a href="#undo-zone">${totalPausedRejected} to undo ↓</a>` : ''}</div>
   <div class="toolbar">
     <form method="get" action="/queue">
-      <input type="hidden" name="pw" value="${escapeHtml(pw)}" />
       <label for="sort">Sort pending:</label>
       <select id="sort" name="sort" onchange="this.form.submit()">
         <option value="newest"${newestSel}>Newest</option>
@@ -531,11 +528,6 @@ const renderPage = (
 </html>`;
 };
 
-const readPw = (req: express.Request): string => {
-  const q = req.query.pw;
-  return typeof q === 'string' ? q : '';
-};
-
 const readId = (req: express.Request): string | null => {
   const raw = req.params.id;
   if (typeof raw !== 'string' || raw === '') return null;
@@ -547,7 +539,6 @@ queueRouter.use(express.urlencoded({ extended: false }));
 
 queueRouter.get('/queue', queueAuth, async (req, res) => {
   const sortMode: 'newest' | 'value' = req.query.sort === 'value' ? 'value' : 'newest';
-  const pw = readPw(req);
   // Three separate fetches so each section is paged independently and one
   // status can't crowd out another under FETCH_CAP. Approved + paused/rejected
   // are always newest-first; the value-sort dropdown only re-ranks pending.
@@ -593,7 +584,6 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
         totalApproved,
         totalPausedRejected,
         sortMode,
-        pw,
       ),
     );
 });
