@@ -10,7 +10,8 @@
 - Added three high-value enrichment signals: competing-directory presence (Psychology Today, Rehabs.com, Recovery.com), LinkedIn hiring activity, and marketing tech stack detection (HubSpot/Salesforce/CallRail tags found in HTML)
 - Added **discovery call prep brief generator** to V1 — the 5-minute pre-call document that turns Sonia into a psychic on every call
 - Added `.cursorrules` and CURSOR_GUIDE.md as committed repo artifacts so Cursor builds correctly the first time
-- Schema unchanged from v1.1 (new signals live inside `Enrichment.painPoints` JSON field — no migration needed)
+- Schema: enrichment signals live inside `Enrichment.painPoints` JSON; PRD §9.7 reply-detection adds two additive nullable columns on `Draft` (`inboundGmailMessageId @unique`, `hubspotInboundEmailId`) — additive migration, no data loss
+- **Reply detection (§9.7) hardened.** Race-safe dedup via a UNIQUE index on `Draft.inboundGmailMessageId` (the Gmail id of the inbound that triggered a `kind='replied'` draft), plus a HubSpot `INCOMING_EMAIL` engagement is upserted to the contact + company timeline on every matched reply (idempotency tracked on `Draft.hubspotInboundEmailId`). The 5 PM daily brief gains a `📬 New replies` section pinning inbound replies from the last 24h at the top of Sonia's triage list.
 
 -----
 
@@ -277,23 +278,25 @@ model Enrichment {
 }
 
 model Draft {
-  id                 String    @id @default(cuid())
-  leadId             String
-  lead               Lead      @relation(fields: [leadId], references: [id])
-  kind               String    // 'cold' | 'followup-2/3/4/5' | 'replied' | 'noshow' | 'quarterly' | 'renewal' | 'upsell' | 'reactivation' | 'voicemail' | 'prep-brief'
-  subject            String?
-  body               String
-  audioMp3           Bytes?
-  personalizationPct Int?
-  specificFacts      String[]
-  status             String
-  rejectReason       String?
-  approvedBy         String?
-  sentAt             DateTime?
-  gmailMessageId     String?
-  hubspotEmailId     String?
-  twilioCallSid      String?
-  createdAt          DateTime  @default(now())
+  id                     String    @id @default(cuid())
+  leadId                 String
+  lead                   Lead      @relation(fields: [leadId], references: [id])
+  kind                   String    // 'cold' | 'followup-2/3/4/5' | 'replied' | 'noshow' | 'quarterly' | 'renewal' | 'upsell' | 'reactivation' | 'voicemail' | 'prep-brief'
+  subject                String?
+  body                   String
+  audioMp3               Bytes?
+  personalizationPct     Int?
+  specificFacts          String[]
+  status                 String
+  rejectReason           String?
+  approvedBy             String?
+  sentAt                 DateTime?
+  gmailMessageId         String?   // outbound RFC-822 Message-ID we generated in sendEmail
+  inboundGmailMessageId  String?   @unique  // v1.2: race-safe dedup for kind='replied' — Gmail id of the inbound that triggered this draft
+  hubspotEmailId         String?   // outbound HubSpot Email engagement (EMAIL direction) created on send
+  hubspotInboundEmailId  String?   // v1.2: HubSpot INCOMING_EMAIL engagement logged for the inbound reply (kind='replied' only)
+  twilioCallSid          String?
+  createdAt              DateTime  @default(now())
   @@index([status, createdAt])
   @@index([leadId, kind])
 }
@@ -404,7 +407,17 @@ Same as v1.1, plus:
 
 ### 9.6 Sending & Sequencing — unchanged from v1.1
 
-### 9.7 Reply Detection — unchanged from v1.1
+### 9.7 Reply Detection — v1.2 additions
+
+`checkReplies` (`*/15 * * * *`) polls Gmail with `newer_than:30m -from:me`, header-checks against `GMAIL_FROM` to guard against BCC-to-self and filter re-delivery routes, runs an OOO heuristic (`Out of Office` / `Automatic reply` subject prefixes; `I am out of the office` / `currently out of the office` body markers), then parses `In-Reply-To` + `References` headers and matches the resulting RFC-822 ids against `Draft.gmailMessageId`. A match generates a `kind='replied'` Draft via Claude (`claude-sonnet-4-5-20250929`, max_tokens 512, temperature 0.5) using the COLD draft (not the last follow-up) as the original-pitch context.
+
+**Race safety.** The 30-min lookback × 15-min cron cadence overlaps deliberately so a missed tick is recovered. Two concurrent `checkReplies` invocations could both pass the AuditLog fast-path; race-safe correctness is enforced by the `Draft.inboundGmailMessageId @unique` index. The losing worker hits `P2002`, re-loads the winner, and resumes the HubSpot upsert half if it was skipped.
+
+**HubSpot inbound engagement (v1.2 addition).** Every matched reply also logs a HubSpot Email engagement with `hs_email_direction='INCOMING_EMAIL'`, `hs_timestamp` = the message's `internalDate` (actual receive time, not our cron-tick time), `hs_email_subject` and `hs_email_text` from the snippet, plus `hs_email_headers` carrying the parsed `from` address. Associations are created via `hs.crm.associations.v4.basicApi.createDefault('emails', emailId, 'contacts'|'companies', ...)` so HubSpot resolves type IDs. Idempotency lives on `Draft.hubspotInboundEmailId` — separate from `hubspotEmailId` because the outbound *response* engagement (created when sender.ts sends the replied draft) will claim the latter. Best-effort: HubSpot failures audit as `hubspotInboundEngagement.failed` and never propagate; the DB-side `Draft kind='replied'` is the source of truth.
+
+**Brief surfacing (v1.2 addition).** Inbound replies in the last 24h appear as a dedicated `📬 New replies` section in the 5 PM daily brief (PRD §9.8 / INSTRUCTIONS Prompt 7.2), with facility name, owner, snippet, received-at, and a deep link into `/queue`. This is the highest-leverage section of the brief — replies are warm intent and Sonia should triage them first.
+
+
 
 ### 9.8 Pipeline Scoring + Brief — unchanged from v1.1 (sorts by `score × expectedCommission`)
 

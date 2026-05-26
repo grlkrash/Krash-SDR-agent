@@ -11,6 +11,8 @@
 - New prompt for the discovery call prep brief generator
 - Updated website analyzer + cold email prompts to consume the new signals
 - Each prompt now has a strict “STOP” instruction at the end + explicit “this prompt creates these files only” list
+- **Prompt 6.5 (reply detection) hardened.** Adds two additive nullable columns on `Draft` — `inboundGmailMessageId @unique` (race-safe dedup boundary) and `hubspotInboundEmailId` (idempotency key for the inbound HubSpot engagement). Adds HubSpot `INCOMING_EMAIL` upsert to the contact + company timeline on every matched reply, timestamped from the message's `internalDate`.
+- **Prompt 7.2 (daily brief)** gains a `📬 New replies (24h)` section pinned at the top of the brief with facility, snippet, received-at, and a deep link into `/queue`. Subject line is prefixed with reply count so Sonia can triage from the inbox preview alone.
 
 **How to use this doc:**
 
@@ -957,6 +959,14 @@ STOP.
 ```
 Create ONLY src/outreach/replyWatcher.ts, src/prompts/replied.ts, AND src/scripts/checkReplies.ts.
 
+Schema prerequisite (Draft model):
+Add two nullable columns to the existing Draft model — additive migration, no data loss:
+  inboundGmailMessageId  String?  @unique   // Gmail id of the INBOUND that triggered a kind='replied' draft. UNIQUE is the race-safe dedup boundary; Postgres allows multiple NULLs so non-replied rows are unaffected.
+  hubspotInboundEmailId  String?            // HubSpot INCOMING_EMAIL engagement id for the inbound reply. Separate from hubspotEmailId because the outbound response engagement (created when sender.ts sends the replied draft) will claim that column.
+Create the migration manually if `prisma migrate dev` blocks on interactive prompts:
+  npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script > prisma/migrations/<ts>_add_reply_dedup_and_inbound_engagement/migration.sql
+  npx prisma migrate deploy && npx prisma generate
+
 src/prompts/replied.ts:
 Export REPLIED_SYSTEM string:
 "Draft a short, no-fluff response to this reply. Match their energy. Move toward a 15-min discovery call OR answer their direct question. 60 words max. No greeting fluff, no closing fluff. Match their tone."
@@ -971,11 +981,15 @@ Use googleapis Gmail client (reuse the OAuth2 setup from src/shared/gmail.ts —
 Flow:
 1. gmail.users.messages.list({ userId: 'me', q: 'newer_than:30m -from:me', maxResults: 50 }).
 2. For each message:
-   a. gmail.users.messages.get to load headers (From, In-Reply-To, References, Subject, Message-Id) and the body snippet.
-   b. Skip messages where 'From' contains GMAIL_FROM (self-sent).
-   c. Detect OOO: subject startsWith 'Out of Office' or 'Automatic reply' OR body contains 'I am out of the office' / 'currently out of the office'. If OOO: AuditLog 'reply.ooo-detected' and skip.
-   d. Find matching Draft: Draft.findFirst where gmailMessageId IN (parse In-Reply-To and References — split on whitespace, strip angle brackets).
-   e. If matched: generate Draft of kind='replied' via Claude (model 'claude-sonnet-4-5-20250929', max_tokens 512, temperature 0.5, system: REPLIED_SYSTEM, user: buildRepliedUser(...)). Persist with status='pending'. AuditLog 'reply.draft-created'.
+   a. Fast-path dedup: AuditLog.findFirst where action IN ('reply.draft-created','reply.ooo-detected') AND meta.path=['inboundMessageId'] equals message.id. If hit, do NOT re-process — BUT if the existing replied Draft has hubspotInboundEmailId IS NULL, fetch metadata (From, Subject) and retry the HubSpot upsert half only. This recovers from a prior run that crashed between draft.create and the HubSpot create.
+   b. gmail.users.messages.get to load headers (From, In-Reply-To, References, Subject, Message-Id), internalDate (epoch ms of receive), and snippet. Format: 'metadata'.
+   c. Skip messages where 'From' contains GMAIL_FROM (self-sent; the `-from:me` query operator misses BCC-to-self, filter re-delivery, and group-alias routes).
+   d. Detect OOO: subject startsWith 'Out of Office' or 'Automatic reply' OR body contains 'I am out of the office' / 'currently out of the office'. If OOO: AuditLog 'reply.ooo-detected' with meta.inboundMessageId and skip.
+   e. Find matching Draft: Draft.findFirst where gmailMessageId IN (parse In-Reply-To and References — split on whitespace, strip angle brackets), order by sentAt desc. Match against any sent Draft (cold or any followup-N).
+   f. If matched: load the COLD draft for that lead (matched.kind === 'cold' ? matched : Draft.findFirst({leadId, kind:'cold'}, sentAt asc)) and pass it as coldDraft to buildRepliedUser so the model grounds in the original pitch, not the last follow-up nudge.
+   g. Generate Draft body via Claude (model 'claude-sonnet-4-5-20250929', max_tokens 512, temperature 0.5, system: REPLIED_SYSTEM, user: buildRepliedUser(coldDraft, snippet, lead, enrichment)). Use extractText (plain text, no JSON).
+   h. Persist Draft with kind='replied', status='pending', subject=`Re: <cold subject>` (idempotent — don't double-prefix if it already starts with 're:'), inboundGmailMessageId=<gmail message id>. Wrap in try/catch — on Prisma P2002 (a concurrent worker won the race), re-load via findUnique({inboundGmailMessageId}) and continue with the existing row so the HubSpot upsert below still runs. Only emit AuditLog 'reply.draft-created' on the first-write path (not on resumed rows).
+   i. HubSpot upsert: log an INCOMING_EMAIL engagement to the contact + company timeline. Properties: hs_timestamp = internalDate (the actual receive time), hs_email_direction = 'INCOMING_EMAIL', hs_email_subject = subject, hs_email_text = snippet.slice(0, 60000), hs_email_headers = JSON.stringify({ from: parsedFromAddress }). Associate via hs.crm.associations.v4.basicApi.createDefault('emails', emailId, 'contacts'|'companies', ...). Idempotent on Draft.hubspotInboundEmailId — short-circuit if already set, else write the returned engagement id back. Best-effort: catch errors as 'hubspotInboundEngagement.failed' and never propagate (DB-side replied Draft is the source of truth). Skip cleanly when neither a HubSpot contact match nor lead.hubspotCompanyId exists — audit as 'hubspotInboundEngagement.skipped-no-associations'.
 
 src/scripts/checkReplies.ts:
 Cron entry. Call checkReplies. AuditLog success/failure.
@@ -983,7 +997,7 @@ Cron entry. Call checkReplies. AuditLog success/failure.
 STOP.
 ```
 
-**Acceptance:** Reply to a sent email from another address → within 15 min, a Draft kind=‘replied’ appears in /queue. The original sequence’s next touch won’t fire (sequencer detects replied=true).
+**Acceptance:** Reply to a sent email from another address → within 15 min, a Draft kind='replied' appears in /queue, the contact's HubSpot timeline shows the INCOMING_EMAIL engagement with the snippet + received-at timestamp, and re-running checkReplies inside the 30-min window is a no-op (dedup hit on inboundGmailMessageId). The original sequence's next touch won't fire (sequencer detects replied=true). Two concurrent `checkReplies` invocations produce exactly one Draft row.
 
 ---
 
@@ -1122,9 +1136,15 @@ Flow:
 4. Suggested call list = top 5 with phone numbers, US business-hour hint by state TZ (just a rough guess — east coast morning, west coast afternoon).
 5. Queue depth: prisma.draft.count where status='pending'.
 6. Yesterday's metrics: emails sent (Draft count status='sent' OR 'auto-sent' in last 24h), replies received (Draft count kind='replied' in last 24h), meetings booked (HubSpot meetings count today — hs.crm.objects.meetings.basicApi.getPage filtered by createdate).
-7. Render markdown:
+7. New replies (v1.2 addition): prisma.draft.findMany where kind='replied' AND createdAt >= now-24h, include lead+enrichment, order by createdAt DESC, cap at 10. For each: facility name, city/state, owner name (if enriched), the inbound snippet (cap at 240 chars), received-at (relative time — '2h ago'), and a deep link to /queue#draft-{id}. Pull the received-at from the matching AuditLog 'reply.draft-created' meta.receivedAt; fall back to draft.createdAt. This section is THE HIGHEST-LEVERAGE block in the brief — replies are warm intent. Render it at the TOP of the brief, above hot leads, with a count badge in the header. If zero replies, render "## 📬 New replies (24h)\n\n_None — quiet day on inbound._".
+8. Render markdown:
 
    # 📊 Pipeline brief — {date}
+   ## 📬 New replies (24h) — {N}
+   - **{facility}** ({city}, {state}) · {ownerName ?? '—'} · {relativeTime}
+     > {snippet}
+     [→ Review in queue]({PUBLIC_URL}/queue#draft-{id})
+   ...
    ## 🔥 Top 5 hot leads (sorted by score × commission)
    ...
    ## ⚠️ Top 3 deals at risk
@@ -1134,7 +1154,7 @@ Flow:
    ## 📥 Queue: {N} pending
    ## 📈 Yesterday: sent {X} | replies {Y} | meetings {Z}
 
-8. sendEmail to process.env.BRIEF_RECIPIENT. Subject: `📊 Pipeline brief — ${date}`.
+9. sendEmail to process.env.BRIEF_RECIPIENT. Subject: `📊 Pipeline brief — ${date}` (when replies > 0, prefix with `📬 ${N} new replies | ` so Sonia can triage from inbox preview alone).
 
 src/scripts/sendDailyBrief.ts:
 Cron entry.
@@ -1142,7 +1162,7 @@ Cron entry.
 STOP.
 ```
 
-**Acceptance:** Run manually → markdown brief arrives at BRIEF_RECIPIENT inbox. Top leads correctly sorted by score × commission.
+**Acceptance:** Run manually → markdown brief arrives at BRIEF_RECIPIENT inbox. Top leads correctly sorted by score × commission. If any kind='replied' drafts were created in the last 24h, they appear in a `📬 New replies (24h)` section at the top of the brief with facility, snippet, and queue deep-link, AND the subject line is prefixed with the reply count.
 
 ---
 

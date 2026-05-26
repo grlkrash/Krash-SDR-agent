@@ -54,23 +54,33 @@ model Enrichment {
 }
 
 model Draft {
-  id                 String    @id @default(cuid())
-  leadId             String
-  lead               Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  kind               String
-  subject            String?
-  body               String
-  audioMp3           Bytes?
-  personalizationPct Int?
-  specificFacts      String[]
-  status             String
-  rejectReason       String?
-  approvedBy         String?
-  sentAt             DateTime?
-  gmailMessageId     String?
-  hubspotEmailId     String?
-  twilioCallSid      String?
-  createdAt          DateTime  @default(now())
+  id                     String    @id @default(cuid())
+  leadId                 String
+  lead                   Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  kind                   String
+  subject                String?
+  body                   String
+  audioMp3               Bytes?
+  personalizationPct     Int?
+  specificFacts          String[]
+  status                 String
+  rejectReason           String?
+  approvedBy             String?
+  sentAt                 DateTime?
+  gmailMessageId         String?
+  // For kind='replied' drafts only: the Gmail message-id of the INBOUND reply
+  // that triggered this draft. @unique is the race-safe dedup boundary for
+  // concurrent checkReplies() workers — Postgres allows multiple NULLs under
+  // UNIQUE so non-replied rows are unaffected.
+  inboundGmailMessageId  String?   @unique
+  hubspotEmailId         String?
+  // For kind='replied' drafts only: HubSpot engagement id for the INCOMING_EMAIL
+  // engagement we logged for the inbound reply. Separate from hubspotEmailId
+  // because the outbound response engagement (created when this draft is sent)
+  // will claim that column. Nullable for idempotent re-attempt.
+  hubspotInboundEmailId  String?
+  twilioCallSid          String?
+  createdAt              DateTime  @default(now())
 
   @@index([status, createdAt])
   @@index([leadId, kind])
