@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { Message, MessageCreateParams } from '@anthropic-ai/sdk/resources/messages';
+import { logClaudeUsage } from './costUsage.js';
 
 type MockHandler = (args: MessageCreateParams) => Promise<unknown>;
 
@@ -9,9 +10,13 @@ export const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const originalCreate = claude.messages.create.bind(claude.messages);
 
-claude.messages.create = ((args: MessageCreateParams, options?: unknown) => {
+claude.messages.create = (async (args: MessageCreateParams, options?: unknown) => {
   if (mockHandler !== null) return mockHandler(args);
-  return originalCreate(args as never, options as never);
+  const msg = (await originalCreate(args as never, options as never)) as Message;
+  if (msg.usage !== undefined) {
+    logClaudeUsage(msg.usage, args.model);
+  }
+  return msg;
 }) as typeof claude.messages.create;
 
 export const setClaudeMock = (handler: MockHandler | null): void => {

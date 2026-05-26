@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { logVoyageUsage } from './costUsage.js';
 
 const VOYAGE_API_URL = 'https://api.voyageai.com/v1/embeddings';
 const VOYAGE_MODEL = 'voyage-3';
@@ -32,6 +33,7 @@ export const embed = async (texts: string[]): Promise<number[][]> => {
 
     if (response.ok) {
       const json = (await response.json()) as VoyageEmbeddingResponse;
+      logVoyageUsage(texts.length, 'voyage.embed');
       return json.data.map((d) => d.embedding);
     }
 

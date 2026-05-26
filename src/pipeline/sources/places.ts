@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { logPlacesUsage } from '../../shared/costUsage.js';
 import { upsertLead } from '../../shared/lead.js';
 
 export const CITIES = {
@@ -129,6 +130,7 @@ const fetchSearchPage = async (
   }
 
   const json: unknown = await res.json();
+  logPlacesUsage('places.searchText');
   return PlacesSearchResponseSchema.parse(json);
 };
 

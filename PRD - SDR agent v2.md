@@ -3,7 +3,7 @@
 **Version:** 1.2
 **Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
-**Last Updated:** May 20, 2026
+**Last Updated:** May 26, 2026
 
 **Changes from v1.1:**
 
@@ -330,6 +330,7 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 |`*/15 * * * *`|15 min   |`checkReplies`        |outreach|
 |`*/10 * * * *`|10 min   |`sendApproved`        |outreach|
 |`0 17 * * *`  |5:00 PM  |`sendDailyBrief`      |outreach|
+|`30 17 * * *` |5:30 PM  |`checkCostCaps`       |ops     |
 |`0 3 * * 1`   |Mon 3am  |`reactivation`        |outreach|
 |`0 4 * * 1`   |Mon 4am  |`refreshGoogleSignals`|pipeline|
 
@@ -553,15 +554,35 @@ Plus new risk:
 
 |Risk                                                                                         |Mitigation                                                                                  |
 |---------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-|Serper spend balloons with 3 extra queries per lead                                         |Cap `enrichAll` daily processing volume to 200 leads/day; budget alert at $80/mo            |
+|Serper spend balloons with 3 extra queries per lead                                         |Cap `enrichAll` daily processing volume to 200 leads/day; budget alert at $50/mo (see §16)  |
 |Tech-stack regex false positives (e.g., a blog about HubSpot that has the script URL in text)|Match script tag context only (`<script.*src=.*hs-scripts`), not bare URL appearance in body|
 |Signals data goes stale                                                                      |Re-run `refreshIntentSignals` weekly for top 100 active deals                               |
 
 -----
 
-## 16. Deployment — unchanged from v1.1
+## 16. Deployment & cost ceiling (first 60 days)
 
-Render web $7 + Postgres $7 + Cron free = ~$14/mo infra. API costs ~$200/mo at expected volume (with the three new Serper calls; Serper is ~5× cheaper than the SerpAPI plan we initially scoped, so signals checks add ~$15/mo rather than ~$50/mo).
+Render web $7 + Postgres $7 + Cron free = ~$14/mo infra.
+
+**Monthly caps (infra + APIs):**
+
+| Item | Monthly cap |
+| --- | --- |
+| Render web + Postgres | $14 |
+| Claude API | $80 |
+| Voyage AI (embeddings) | $5 |
+| Google Places | $50 |
+| Serper (incl. signals checks) | $50 |
+| Twilio (voice + lookups) | $30 |
+| ElevenLabs | $22 |
+| Mailwarm or equivalent | $50 |
+| **Total infra+APIs** | **~$301/month** |
+
+Break-even at ~2 Select-tier deals/month ($240 × 2 = $480). Target 5+ deals/month by month 3.
+
+Signals enrichment adds ~$0.003/lead in Serper marginal cost (~$15 at 5,000 leads in month 1); the $50 Serper cap above covers all search use including signals.
+
+**Cost cap alerts (v1.2).** `checkCostCaps` runs daily at 5:30 PM ET. It sums `AuditLog` rows with `action='cost.usage'` (written by Claude, Serper, Voyage, and Places wrappers) and emails `BRIEF_RECIPIENT` when any auto-tracked provider crosses 80% or 100% of its cap, or when estimated total crosses 80%/100% of $301. Twilio, ElevenLabs, and Mailwarm are manual dashboard checks for now. Alert dedup: one email per provider/threshold per calendar month via `costCap.alert-sent` AuditLog rows. Marginal cost of the alert system itself: ~$0 (existing Gmail + Postgres; one extra cron/day).
 
 -----
 

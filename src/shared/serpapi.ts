@@ -1,6 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
+import { logSerperUsage } from './costUsage.js';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' });
 const prisma = new PrismaClient({ adapter });
@@ -54,6 +55,7 @@ export const serpapi = async (query: string, num = 5): Promise<SerpResult[]> => 
     }
     const json: unknown = await res.json();
     const parsed = ResponseSchema.parse(json);
+    logSerperUsage('serpapi');
     return parsed.organic ?? [];
   } catch (err) {
     await logError(query, err instanceof Error ? err.message : String(err));
