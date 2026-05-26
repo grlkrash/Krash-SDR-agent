@@ -11,6 +11,7 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { draftColdEmail } from '../outreach/draftCold.js';
+import { scanLeaks } from '../outreach/leakScan.js';
 
 const DEFAULT_LIMIT = 3;
 const LIMIT = Number(process.env.LIMIT) || DEFAULT_LIMIT;
@@ -18,19 +19,6 @@ const LIMIT = Number(process.env.LIMIT) || DEFAULT_LIMIT;
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
 });
-
-const LEAK_PATTERNS: Array<{ label: string; rx: RegExp }> = [
-  { label: 'dollar amount', rx: /\$\s?\d/ },
-  { label: 'pricing word', rx: /\b(?:price|pricing|cost|costs|fee|fees|dollars?|USD)\b/i },
-  { label: 'per-year/month framing', rx: /\b\d[\d,]*\s*(?:\/\s*(?:yr|mo|year|month)|per\s+(?:year|month))\b/i },
-  { label: 'capitalized tier name', rx: /\b(?:Claimed|Select|Premium)\b/ },
-];
-
-const scanLeaks = (body: string): Array<{ label: string; match: string }> =>
-  LEAK_PATTERNS.flatMap((p) => {
-    const m = body.match(p.rx);
-    return m === null ? [] : [{ label: p.label, match: m[0] }];
-  });
 
 const targets = await prisma.draft.findMany({
   where: {
@@ -81,7 +69,7 @@ if (targets.length === 0) {
       console.log(`Facts:      ${JSON.stringify(draft.specificFacts)}`);
       console.log(`\n--- Body ---\n${draft.body}\n--- End ---`);
 
-      const hits = scanLeaks(draft.body);
+      const hits = scanLeaks(draft.body, [lead.name]);
       if (hits.length === 0) {
         console.log('Leak scan:  clean.');
         okCount += 1;

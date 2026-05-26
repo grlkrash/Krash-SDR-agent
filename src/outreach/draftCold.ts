@@ -9,6 +9,7 @@ import {
   buildColdEmailUser,
 } from '../prompts/coldEmail.js';
 import { guessEmail } from '../shared/guessEmail.js';
+import { scanLeaks } from './leakScan.js';
 
 const cached = (text: string): Array<TextBlockParam> => [
   { type: 'text', text, cache_control: { type: 'ephemeral' } },
@@ -23,6 +24,11 @@ const EVAL_TEMPERATURE = 0.3;
 const RETRY_TRIGGER_PCT = 60;
 // Evaluator runs strict; 58 on this grader is comfortably ≥60% real personalization.
 const ACCEPT_FLOOR_PCT = 58;
+// Past this many rejected cold drafts on a single lead, stop re-drafting.
+// Sonia has effectively said "this lead is unworkable" — burning more Claude
+// calls won't unstick it. She can kill the lead from /queue, or fix the
+// underlying enrichment data and bump rejected drafts back via /undo.
+const MAX_REJECTS_PER_LEAD = 3;
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -81,11 +87,33 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
   const { enrichment, ...leadOnly } = lead;
   if (enrichment === null) return null;
 
+  // Hard skip: operator killed this lead. Defense in depth — killLead also
+  // writes a Suppression row when an email is known, but Lead.doNotContact
+  // catches the case where neither email nor phone was known.
+  if (lead.doNotContact) {
+    await audit('draftCold.do-not-contact', leadId, {});
+    return null;
+  }
+
   const existing = await prisma.draft.findFirst({
     where: { leadId, kind: 'cold', status: { not: 'rejected' } },
     select: { id: true },
   });
   if (existing !== null) return null;
+
+  // Reject-cap: after N rejected cold drafts, the model isn't going to crack
+  // this lead with more attempts. Stop burning Claude tokens until the
+  // operator either kills the lead or restores a rejected draft via /undo.
+  const rejectedCount = await prisma.draft.count({
+    where: { leadId, kind: 'cold', status: 'rejected' },
+  });
+  if (rejectedCount >= MAX_REJECTS_PER_LEAD) {
+    await audit('draftCold.skipped-too-many-rejects', leadId, {
+      rejectedCount,
+      capacity: MAX_REJECTS_PER_LEAD,
+    });
+    return null;
+  }
 
   const targetEmail = enrichment.ownerEmail ?? guessEmail(enrichment.ownerName, lead.website);
   if (targetEmail === null) {
@@ -122,6 +150,18 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
   }
 
   let gen = await generate([{ role: 'user', content: baseUser }]);
+
+  // Hard pricing/tier-name gate. The system prompt forbids these but model
+  // obedience isn't enforced — if the model leaked, skip rather than retry:
+  // a leak indicates a deeper failure mode worth surfacing in AuditLog. The
+  // facility name is passed as `ignoreSubstrings` so a center literally
+  // named "Premium Recovery" doesn't trip the tier-name regex.
+  const firstLeaks = scanLeaks(gen.body, [leadOnly.name]);
+  if (firstLeaks.length > 0) {
+    await audit('draftCold.leak-detected', leadId, { attempt: 'first', hits: firstLeaks });
+    return null;
+  }
+
   let evalResult = await evaluate(gen.body, prospectFacts);
 
   if (evalResult.pct < RETRY_TRIGGER_PCT) {
@@ -134,6 +174,11 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
       { role: 'assistant', content: JSON.stringify(firstAttempt) },
       { role: 'user', content: retryFeedback },
     ]);
+    const retryLeaks = scanLeaks(gen.body, [leadOnly.name]);
+    if (retryLeaks.length > 0) {
+      await audit('draftCold.leak-detected', leadId, { attempt: 'retry', hits: retryLeaks });
+      return null;
+    }
     evalResult = await evaluate(gen.body, prospectFacts);
     if (evalResult.pct < ACCEPT_FLOOR_PCT) {
       await audit('draftCold.score-too-low', leadId, {

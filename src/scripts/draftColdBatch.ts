@@ -26,6 +26,7 @@ try {
 
   const candidates = await prisma.lead.findMany({
     where: {
+      doNotContact: false,
       enrichment: { isNot: null },
       drafts: { none: { kind: 'cold', status: { not: 'rejected' } } },
       OR: [

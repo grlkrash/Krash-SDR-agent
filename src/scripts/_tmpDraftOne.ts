@@ -15,6 +15,7 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { draftColdEmail } from '../outreach/draftCold.js';
+import { scanLeaks } from '../outreach/leakScan.js';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -85,17 +86,7 @@ console.log(`Personalization: ${pct ?? '(none)'}%`);
 console.log(`Specific facts:  ${JSON.stringify(specificFacts)}`);
 console.log(`\n--- Body ---\n${body}\n--- End ---\n`);
 
-const LEAK_PATTERNS: Array<{ label: string; rx: RegExp }> = [
-  { label: 'dollar amount', rx: /\$\s?\d/ },
-  { label: 'pricing word', rx: /\b(?:price|pricing|cost|costs|fee|fees|dollars?|USD)\b/i },
-  { label: 'per-year/month framing', rx: /\b\d[\d,]*\s*(?:\/\s*(?:yr|mo|year|month)|per\s+(?:year|month))\b/i },
-  { label: 'capitalized tier name', rx: /\b(?:Claimed|Select|Premium)\b/ },
-];
-
-const hits = LEAK_PATTERNS.flatMap((p) => {
-  const m = body.match(p.rx);
-  return m === null ? [] : [{ label: p.label, match: m[0] }];
-});
+const hits = scanLeaks(body, [lead.name]);
 
 if (hits.length === 0) {
   console.log('LEAK SCAN: clean — no price / commission / tier-name patterns in body.');

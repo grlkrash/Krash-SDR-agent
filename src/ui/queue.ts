@@ -3,6 +3,8 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient, type Draft, type Enrichment, type Lead } from '@prisma/client';
 import { z } from 'zod';
 import { queueAuth } from '../middleware/queueAuth.js';
+import { killLead } from '../outreach/killLead.js';
+import { logSentEmailToHubspot } from '../outreach/logSentEmail.js';
 
 const PAGE_SIZE = 30;
 // We fetch a window larger than the page so sort=value can rank the full
@@ -67,6 +69,12 @@ const ApproveBodySchema = z.object({
 const RejectBodySchema = z.object({
   reason: z.string().optional(),
 });
+
+const KillLeadBodySchema = z.object({
+  reason: z.string().optional(),
+});
+
+const DEFAULT_KILL_REASON = 'no reason given';
 
 type DraftWithRel = Draft & { lead: Lead & { enrichment: Enrichment | null } };
 
@@ -192,6 +200,21 @@ const renderPauseForm = (d: DraftWithRel): string =>
       </button>
     </form>`;
 
+// "Kill lead" stops ALL outreach for this lead permanently. Stronger than
+// pause: marks Lead.doNotContact=true, writes a Suppression row keyed on the
+// known email/phone, cancels every active draft, and flips the HubSpot
+// contact's hs_lead_status to UNQUALIFIED. Uses an HTML prompt() in JS so
+// Sonia can type a reason at click time; the reason goes into AuditLog +
+// the cancelled drafts' rejectReason.
+const renderKillLeadForm = (d: DraftWithRel): string =>
+  `<form method="POST" action="/kill-lead/${encodeURIComponent(d.lead.id)}" style="display:inline" onsubmit="return killLeadPrompt(this)">
+      <input type="hidden" name="reason" value="" />
+      <button type="submit" class="btn-kill"
+        title="Stop ALL outreach for this lead and tell HubSpot the contact is unqualified">
+        Kill lead
+      </button>
+    </form>`;
+
 const renderPendingCard = (d: DraftWithRel, pw: string): string => {
   const subject = d.subject ?? '';
   const pwQs = `?pw=${encodeURIComponent(pw)}`;
@@ -211,7 +234,10 @@ const renderPendingCard = (d: DraftWithRel, pw: string): string => {
         <button type="submit" class="btn btn-reject" formaction="${rejectAction}">Reject</button>
       </div>
     </form>
-    ${renderPauseForm(d)}
+    <div class="lead-actions">
+      ${renderPauseForm(d)}
+      ${renderKillLeadForm(d)}
+    </div>
   </div>`;
 };
 
@@ -237,6 +263,7 @@ const renderApprovedCard = (d: DraftWithRel): string => {
     <div class="approved-actions">
       ${renderMarkSentForm(d)}
       ${renderPauseForm(d)}
+      ${renderKillLeadForm(d)}
     </div>
   </div>`;
 };
@@ -280,9 +307,12 @@ const renderUndoRow = (d: DraftWithRel): string => {
       <span class="undo-status ${statusClass}">${escapeHtml(d.status)}</span>
       ${reasonHtml}
     </div>
-    <form method="POST" action="/undo/${encodeURIComponent(d.id)}" style="display:inline">
-      <button type="submit" class="btn-undo" title="Restore to pending">↩ Undo</button>
-    </form>
+    <div class="undo-actions">
+      <form method="POST" action="/undo/${encodeURIComponent(d.id)}" style="display:inline">
+        <button type="submit" class="btn-undo" title="Restore to pending">↩ Undo</button>
+      </form>
+      ${renderKillLeadForm(d)}
+    </div>
   </div>`;
 };
 
@@ -311,6 +341,8 @@ const STYLE = `
   .email-text.subject { font-weight: 500; }
   .email-text.empty { color: #9ca3af; font-style: italic; }
   .approved-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .lead-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .undo-actions { display: flex; gap: 6px; flex-shrink: 0; }
   .undo-row { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
   .undo-info { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; color: #374151; flex: 1; min-width: 0; }
   .lead-name-sm { font-weight: 600; color: #111; font-size: 14px; }
@@ -340,8 +372,23 @@ const STYLE = `
   .btn-approve { background: #16a34a; color: white; }
   .btn-edit-approve { background: #2563eb; color: white; }
   .btn-reject { background: white; color: #b91c1c; border-color: #fecaca; }
+  .btn-kill { background: #dc2626; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; }
+  .btn-kill:hover { background: #b91c1c; }
   a { color: #2563eb; text-decoration: none; }
   a:hover { text-decoration: underline; }
+`;
+
+// Two-step confirm for the Kill lead button: a confirm() with the consequences,
+// then a prompt() for the reason. The reason is stamped into the hidden
+// input on the same form. Cancel at either step aborts the submit.
+const KILL_LEAD_SCRIPT = `
+window.killLeadPrompt = function (form) {
+  if (!window.confirm('Kill this lead?\\n\\nThis cancels every active draft, suppresses the email, and tells HubSpot the contact is UNQUALIFIED.')) return false;
+  var reason = window.prompt('Reason for killing this lead?', '') || '';
+  var input = form.querySelector('input[name="reason"]');
+  if (input) input.value = reason;
+  return true;
+};
 `;
 
 const HOLD_SCRIPT = `
@@ -465,6 +512,7 @@ const renderPage = (
     <h2 class="section-title">✉️ Approved — ready to send <span class="count">(${totalApproved})</span></h2>
     ${approvedCards}
   </section>${undoSection}
+  <script>${KILL_LEAD_SCRIPT}</script>
   <script>${HOLD_SCRIPT}</script>
 </body>
 </html>`;
@@ -650,6 +698,11 @@ queueRouter.post('/mark-sent/:id', queueAuth, async (req, res) => {
       meta: { leadId: existing.leadId },
     },
   });
+  // Best-effort HubSpot engagement log so the contact's timeline shows the
+  // send. Never throws — internal try/catch + AuditLog. We do this AFTER the
+  // DB-side 'sent' flip so the source of truth is correct even if HubSpot
+  // is down.
+  await logSentEmailToHubspot(id);
   res.redirect(303, '/queue');
 });
 
@@ -712,5 +765,26 @@ queueRouter.post('/pause-sequence/:leadId', queueAuth, async (req, res) => {
       meta: { pausedBy: 'sonia', count: result.count },
     },
   });
+  res.redirect(303, '/queue');
+});
+
+// Hard stop for a lead. Delegates to outreach/killLead which handles
+// Lead.doNotContact, Suppression upsert, active-draft cancellation, and the
+// HubSpot hs_lead_status=UNQUALIFIED flip. HubSpot failures are non-fatal —
+// killLead writes its own AuditLog row for that case.
+queueRouter.post('/kill-lead/:leadId', queueAuth, async (req, res) => {
+  const leadId = req.params.leadId;
+  if (typeof leadId !== 'string' || leadId === '') {
+    res.status(400).json({ error: 'invalid leadId' });
+    return;
+  }
+  const parsed = KillLeadBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid body' });
+    return;
+  }
+  const reason = parsed.data.reason?.trim() ?? '';
+  const effectiveReason = reason === '' ? DEFAULT_KILL_REASON : reason;
+  await killLead(leadId, effectiveReason);
   res.redirect(303, '/queue');
 });
