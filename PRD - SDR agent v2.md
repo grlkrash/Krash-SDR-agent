@@ -323,6 +323,7 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 |`30 6 * * *`  |6:30 AM  |`draftColdBatch`      |outreach|
 |`0 7 * * *`   |7:00 AM  |`draftFollowups`      |outreach|
 |`30 7 * * *`  |7:30 AM  |`runSequences`        |outreach|
+|`0 8 * * *`   |8:00 AM  |`draftUpsellBatch`    |outreach|
 |`0 9 * * *`   |9:00 AM  |`quarterlyCheckins`   |outreach|
 |`0 10 * * *`  |10:00 AM |`renewalWarnings`     |outreach|
 |`0 14 * * *`  |2:00 PM  |`dropVoicemails`      |outreach|
