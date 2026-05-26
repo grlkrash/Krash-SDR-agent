@@ -4,6 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { queueRouter } from './ui/queue.js';
 import { prepBriefRouter } from './ui/prepBrief.js';
+import { copilotRouter } from './ui/copilot.js';
 import { unsubscribeRouter } from './routes/unsubscribe.js';
 import { hs, hsRetry } from './shared/hubspot.js';
 import { claude } from './shared/claude.js';
@@ -107,6 +108,7 @@ app.get('/health', async (_req, res) => {
 
 app.use('/', queueRouter);
 app.use('/', prepBriefRouter);
+app.use('/', copilotRouter);
 app.use('/', unsubscribeRouter);
 
 const port = Number(process.env.PORT) || DEFAULT_PORT;
