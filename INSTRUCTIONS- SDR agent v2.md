@@ -13,6 +13,7 @@
 - Each prompt now has a strict “STOP” instruction at the end + explicit “this prompt creates these files only” list
 - **Prompt 6.5 (reply detection) hardened.** Adds two additive nullable columns on `Draft` — `inboundGmailMessageId @unique` (race-safe dedup boundary) and `hubspotInboundEmailId` (idempotency key for the inbound HubSpot engagement). Adds HubSpot `INCOMING_EMAIL` upsert to the contact + company timeline on every matched reply, timestamped from the message's `internalDate`.
 - **Prompt 7.2 (daily brief)** gains a `📬 New replies (24h)` section pinned at the top of the brief with facility, snippet, received-at, and a deep link into `/queue`. Subject line is prefixed with reply count so Sonia can triage from the inbox preview alone.
+- **Prompt 7.3 (inbound snippet persistence — v1.2 follow-up)** extends the `reply.draft-created` AuditLog meta with `inboundSnippet` so the daily brief renders the snippet without re-fetching from HubSpot. The brief reads audit meta first and only falls back to `emails.basicApi.getById` for historical replied drafts written before this prompt landed. No schema change.
 
 **How to use this doc:**
 
@@ -1163,6 +1164,56 @@ STOP.
 ```
 
 **Acceptance:** Run manually → markdown brief arrives at BRIEF_RECIPIENT inbox. Top leads correctly sorted by score × commission. If any kind='replied' drafts were created in the last 24h, they appear in a `📬 New replies (24h)` section at the top of the brief with facility, snippet, and queue deep-link, AND the subject line is prefixed with the reply count.
+
+---
+
+### Prompt 7.3 — Persist inbound reply snippet in audit meta (v1.2 follow-up)
+
+```
+Edit ONLY src/outreach/replyWatcher.ts AND src/outreach/dailyBrief.ts. No new files. No schema change.
+
+Background:
+Prompt 7.2 currently re-fetches the inbound reply snippet from HubSpot
+(Draft.hubspotInboundEmailId → emails.basicApi.getById(['hs_email_text']))
+for every reply row in the daily brief. The snippet is already in memory
+at the moment we write the 'reply.draft-created' audit row in
+replyWatcher — persisting it there is a 3-line write that eliminates up
+to 10 daily HubSpot GETs and lets the brief render the snippet even when
+the HubSpot inbound engagement step has been retried but not yet logged.
+
+src/outreach/replyWatcher.ts edits:
+1. Add a top-of-file constant `INBOUND_SNIPPET_AUDIT_MAX_CHARS = 2000`
+   (10× display cap so the brief never truncates against the audit row,
+   but bounded so the JSONB stays small).
+2. Extend the existing
+     audit('reply.draft-created', 'Draft', outcome.draft.id, { ... })
+   call to add one new meta key:
+     inboundSnippet: snippet.slice(0, INBOUND_SNIPPET_AUDIT_MAX_CHARS)
+   No other meta keys change. No new audit action.
+
+src/outreach/dailyBrief.ts edits:
+1. Extend the existing reply-meta zod schema to also parse
+     inboundSnippet: z.string().optional()
+   (keep `.partial()` semantics so historical rows without the key still
+   parse cleanly).
+2. In the audit-row scan loop in buildReplyRows, also populate a
+     snippetByDraft: Map<string, string>
+   keyed on row.entityId when meta.inboundSnippet is present and
+   non-empty.
+3. In the per-draft loop, prefer `snippetByDraft.get(d.id)` before calling
+   `fetchInboundSnippet(d.hubspotInboundEmailId)`. Only call HubSpot when
+   the audit meta is missing (covers historical drafts written before
+   this prompt landed).
+4. `cleanSnippet(...)` is still applied to the chosen source so the
+   240-char display cap and whitespace collapse stay consistent.
+
+STOP.
+```
+
+**Acceptance:**
+1. Trigger checkReplies on a fresh inbound → the new `reply.draft-created` AuditLog row's `meta.inboundSnippet` contains the (capped) snippet text.
+2. Run sendDailyBrief with at least one in-window replied draft → the brief renders that draft's snippet, served from audit meta with ZERO `emails.basicApi.getById` calls for the audit-covered draft (verify by inspecting the AuditLog row before the run, or by temporarily logging inside fetchInboundSnippet).
+3. Force the fallback path: clear `meta.inboundSnippet` for one audit row OR use a historical replied draft written before this prompt landed → the brief still renders correctly via the HubSpot fallback; no errors thrown.
 
 ---
 

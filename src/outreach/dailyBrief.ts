@@ -15,11 +15,14 @@
 //   bounded to the union of hot + at-risk + call-list candidate IDs (≤ ~30)
 //   so the daily API budget stays cheap.
 //
-//   Inbound reply snippet lives only on the HubSpot inbound engagement
-//   (hs_email_text). We resolve via Draft.hubspotInboundEmailId →
-//   emails.basicApi.getById; if the HubSpot logging step never completed
-//   (id null) we render a placeholder rather than skip the row, because the
-//   facility name + queue deep link are still actionable on their own.
+//   Inbound reply snippet: preferred source is AuditLog
+//   'reply.draft-created' meta.inboundSnippet (written by replyWatcher when
+//   the draft is created — see INSTRUCTIONS Prompt 7.3). Falls back to
+//   HubSpot `emails.basicApi.getById(['hs_email_text'])` keyed on
+//   `Draft.hubspotInboundEmailId` for historical drafts written before
+//   the audit-meta key existed. Final fallback is a placeholder so the
+//   facility name + queue deep link stay actionable even when both
+//   sources are empty.
 //
 // Subject line:
 //   Default `📊 Pipeline brief — YYYY-MM-DD`. When N replies > 0, the subject
@@ -206,7 +209,13 @@ const enrichDeals = async (dealIds: string[]): Promise<Map<string, EnrichedDeal>
   return out;
 };
 
-const ReceivedAtMetaSchema = z.object({ receivedAt: z.string() }).partial();
+// `.partial()` so historical audit rows (written before Prompt 7.3 added
+// `inboundSnippet`) still parse cleanly and fall through to the HubSpot
+// fallback path.
+const ReplyDraftMetaSchema = z.object({
+  receivedAt: z.string(),
+  inboundSnippet: z.string(),
+}).partial();
 
 const fetchInboundSnippet = async (
   hubspotInboundEmailId: string | null,
@@ -246,28 +255,38 @@ const buildReplyRows = async (
 ): Promise<ReplyRow[]> => {
   if (drafts.length === 0) return [];
 
-  // Pull the original inbound received-at from the matching audit row. Falls
-  // back to draft.createdAt for the P2002 resumed-write branch in
-  // replyWatcher, which doesn't re-audit on the second pass.
+  // One audit-row scan extracts both receivedAt and the persisted inbound
+  // snippet (Prompt 7.3). receivedAt falls back to draft.createdAt for the
+  // P2002 resumed-write branch in replyWatcher, which doesn't re-audit on
+  // the second pass. Snippet falls back to a HubSpot fetch (then to a
+  // placeholder) for historical drafts written before Prompt 7.3.
   const auditRows = await prisma.auditLog.findMany({
     where: { action: 'reply.draft-created', entityId: { in: drafts.map((d) => d.id) } },
   });
   const receivedByDraft = new Map<string, Date>();
+  const snippetByDraft = new Map<string, string>();
   for (const row of auditRows) {
     if (row.entityId === null) continue;
-    const parsed = ReceivedAtMetaSchema.safeParse(row.meta);
-    if (!parsed.success || parsed.data.receivedAt === undefined) continue;
-    const ts = Date.parse(parsed.data.receivedAt);
-    if (Number.isNaN(ts)) continue;
-    receivedByDraft.set(row.entityId, new Date(ts));
+    const parsed = ReplyDraftMetaSchema.safeParse(row.meta);
+    if (!parsed.success) continue;
+    if (parsed.data.receivedAt !== undefined) {
+      const ts = Date.parse(parsed.data.receivedAt);
+      if (!Number.isNaN(ts)) receivedByDraft.set(row.entityId, new Date(ts));
+    }
+    const persisted = parsed.data.inboundSnippet;
+    if (persisted !== undefined && persisted.trim() !== '') {
+      snippetByDraft.set(row.entityId, persisted);
+    }
   }
 
   // Sequential HubSpot GETs (≤ REPLY_FEED_LIMIT) so a thundering herd on the
   // inbound-emails endpoint can't trip the burst limit. The brief runs once
-  // a day; latency is irrelevant.
+  // a day; latency is irrelevant. With Prompt 7.3 in place the steady-state
+  // path skips HubSpot entirely — only historical drafts hit the fetch.
   const rows: ReplyRow[] = [];
   for (const d of drafts) {
-    const rawSnippet = await fetchInboundSnippet(d.hubspotInboundEmailId);
+    const persisted = snippetByDraft.get(d.id) ?? null;
+    const rawSnippet = persisted ?? (await fetchInboundSnippet(d.hubspotInboundEmailId));
     const snippet = rawSnippet === null ? SNIPPET_PLACEHOLDER : cleanSnippet(rawSnippet);
     const received = receivedByDraft.get(d.id) ?? d.createdAt;
     rows.push({

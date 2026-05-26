@@ -69,6 +69,12 @@ const HUBSPOT_INBOUND_DIRECTION = 'INCOMING_EMAIL';
 // HubSpot rejects email bodies above ~64KB; matches logSentEmail.ts.
 const HUBSPOT_BODY_MAX_CHARS = 60000;
 const HUBSPOT_CONTACT_SEARCH_LIMIT = 1;
+// Cap for the snippet copy we stash in AuditLog.meta. 10× the daily-brief
+// display cap (240) so the brief never has to truncate against the audit
+// row, but bounded so the JSONB column stays small and historical rows
+// don't bloat the table. Anything longer is still readable via the
+// HubSpot fallback path in dailyBrief.
+const INBOUND_SNIPPET_AUDIT_MAX_CHARS = 2000;
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -421,6 +427,9 @@ export const checkReplies = async (): Promise<void> => {
         from,
         subject,
         receivedAt: receivedAt.toISOString(),
+        // Stash the snippet here so the daily brief can render it without a
+        // HubSpot round-trip. Bounded copy — see INBOUND_SNIPPET_AUDIT_MAX_CHARS.
+        inboundSnippet: snippet.slice(0, INBOUND_SNIPPET_AUDIT_MAX_CHARS),
       });
     }
 

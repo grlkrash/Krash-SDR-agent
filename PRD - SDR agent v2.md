@@ -417,6 +417,8 @@ Same as v1.1, plus:
 
 **Brief surfacing (v1.2 addition).** Inbound replies in the last 24h appear as a dedicated `📬 New replies` section in the 5 PM daily brief (PRD §9.8 / INSTRUCTIONS Prompt 7.2), with facility name, owner, snippet, received-at, and a deep link into `/queue`. This is the highest-leverage section of the brief — replies are warm intent and Sonia should triage them first.
 
+**Snippet persistence (v1.2 follow-up, INSTRUCTIONS Prompt 7.3).** The `reply.draft-created` AuditLog row carries `meta.inboundSnippet` (capped at 2000 chars, ~10× the brief's display cap). The daily brief reads the snippet from audit meta first and only falls back to `emails.basicApi.getById(['hs_email_text'])` on the matching `Draft.hubspotInboundEmailId` for historical drafts created before this follow-up landed. This eliminates up to one HubSpot GET per replied draft per brief and lets the brief render correctly even when the HubSpot inbound engagement step is mid-retry. No schema change — `inboundSnippet` lives in the existing `AuditLog.meta` JSONB.
+
 
 
 ### 9.8 Pipeline Scoring + Brief — unchanged from v1.1 (sorts by `score × expectedCommission`)
