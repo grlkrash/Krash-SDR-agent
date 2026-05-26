@@ -15,20 +15,35 @@ const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
 });
 
-try {
-  await checkReplies();
-  await prisma.auditLog.create({ data: {
-    action: 'cron.success',
-    entity: 'checkReplies',
-    meta: {},
-  } });
-  console.log(JSON.stringify({ ok: true }));
-} catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
-  await prisma.auditLog.create({ data: {
-    action: 'cron.failure',
-    entity: 'checkReplies',
-    meta: { error: message },
-  } });
-  throw err;
-}
+const main = async (): Promise<void> => {
+  if (!process.env.GMAIL_REFRESH_TOKEN) {
+    await prisma.auditLog.create({ data: {
+      action: 'cron.skipped',
+      entity: 'checkReplies',
+      entityId: null,
+      meta: { reason: 'GMAIL_REFRESH_TOKEN not set — manual-send phase' },
+    } });
+    console.log(JSON.stringify({ status: 'skipped', reason: 'no Gmail credentials yet' }));
+    return;
+  }
+
+  try {
+    await checkReplies();
+    await prisma.auditLog.create({ data: {
+      action: 'cron.success',
+      entity: 'checkReplies',
+      meta: {},
+    } });
+    console.log(JSON.stringify({ ok: true }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await prisma.auditLog.create({ data: {
+      action: 'cron.failure',
+      entity: 'checkReplies',
+      meta: { error: message },
+    } });
+    throw err;
+  }
+};
+
+await main();
