@@ -1,0 +1,12 @@
+# SSA web service — Railway config-as-code.
+# Cron service: duplicate this repo in Railway, set startCommand to `npm run start:cron`
+# and cronSchedule to `*/5 * * * *`. See RAILWAY.md.
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install && npx prisma generate && npm run build && npx playwright install --with-deps chromium"
+
+[deploy]
+startCommand = "npm run start:web"
+healthcheckPath = "/health"
+restartPolicyType = "ON_FAILURE"

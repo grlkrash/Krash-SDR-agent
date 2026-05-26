@@ -4,7 +4,7 @@
 - [ ] Serper subscription active (Developer tier)
 - [ ] HubSpot Service Key configured with all required scopes
 - [ ] HubSpot custom properties created (setupHubspotCustomProperties.ts)
-- [ ] Gmail OAuth refresh token in Render env (run gmailAuth.ts locally first)
+- [ ] Gmail OAuth refresh token in Railway env (run gmailAuth.ts locally first)
 - [ ] Twilio number purchased
 - [ ] ElevenLabs voice cloned (Sonia's own voice for authenticity)
 - [ ] SPF, DKIM, DMARC on sobrietyselect.com confirmed via mxtoolbox

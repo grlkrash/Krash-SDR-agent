@@ -54,6 +54,7 @@ const CALL_LIST_LIMIT = 5;
 const CALL_LIST_CANDIDATE_POOL = 25;
 const REPLY_FEED_LIMIT = 10;
 const REPLY_SNIPPET_MAX = 240;
+const HIRING_SPIKE_LIMIT = 10;
 const MEETINGS_SEARCH_LIMIT = 1;
 const DEAL_PROPERTIES = ['dealname', 'amount', 'hs_lastmodifieddate'];
 const STALLED_RX = /^Stalled (\d+)d in stage$/;
@@ -216,6 +217,56 @@ const ReplyDraftMetaSchema = z.object({
   receivedAt: z.string(),
   inboundSnippet: z.string(),
 }).partial();
+
+const HiringSpikeMetaSchema = z.object({
+  leadId: z.string(),
+  facility: z.string(),
+  city: z.string(),
+  state: z.string(),
+  roleTitles: z.array(z.string()).optional(),
+});
+
+interface HiringSpikeRow {
+  dealId: string;
+  facility: string;
+  city: string;
+  state: string;
+  roles: string;
+}
+
+const buildHiringSpikeRows = async (since: Date): Promise<HiringSpikeRow[]> => {
+  const rows = await prisma.auditLog.findMany({
+    where: { action: 'intent.hiring-spike', createdAt: { gte: since } },
+    orderBy: { createdAt: 'desc' },
+    take: HIRING_SPIKE_LIMIT,
+  });
+  const out: HiringSpikeRow[] = [];
+  for (const row of rows) {
+    if (row.entityId === null) continue;
+    const parsed = HiringSpikeMetaSchema.safeParse(row.meta);
+    if (!parsed.success) continue;
+    const roles = (parsed.data.roleTitles ?? []).slice(0, 2).join(', ');
+    out.push({
+      dealId: row.entityId,
+      facility: parsed.data.facility,
+      city: parsed.data.city,
+      state: parsed.data.state,
+      roles: roles === '' ? 'open roles' : roles,
+    });
+  }
+  return out;
+};
+
+const renderHiringSpikes = (rows: HiringSpikeRow[]): string => {
+  if (rows.length === 0) {
+    return '## 🚨 Hiring spikes (24h)\n\n_None — no new hiring activity on open deals._';
+  }
+  const header = `## 🚨 Hiring spikes (24h) — ${rows.length}`;
+  const items = rows.map((r) =>
+    `- **${r.facility}** (${r.city}, ${r.state}) — now hiring: ${r.roles}`,
+  ).join('\n');
+  return `${header}\n\n${items}`;
+};
 
 const fetchInboundSnippet = async (
   hubspotInboundEmailId: string | null,
@@ -491,11 +542,14 @@ export const sendDailyBrief = async (): Promise<void> => {
 
   const callList = buildCallList(callCandidates, enriched);
   const replyRows = await buildReplyRows(repliedDrafts, now);
+  const hiringSpikeRows = await buildHiringSpikeRows(cutoff);
 
   const body = [
     `# 📊 Pipeline brief — ${date}`,
     '',
     renderNewReplies(replyRows, publicUrl),
+    '',
+    renderHiringSpikes(hiringSpikeRows),
     '',
     renderHotLeads(hotTop, enriched),
     '',
@@ -523,6 +577,7 @@ export const sendDailyBrief = async (): Promise<void> => {
         date,
         recipient,
         replyCount: replyRows.length,
+        hiringSpikeCount: hiringSpikeRows.length,
         hotCount: hotTop.length,
         atRiskCount: atRiskTop.length,
         callListCount: callList.length,

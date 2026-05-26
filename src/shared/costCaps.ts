@@ -1,5 +1,5 @@
 export type CostProvider =
-  | 'render'
+  | 'infra'
   | 'claude'
   | 'voyage'
   | 'places'
@@ -18,7 +18,7 @@ export type CostCapRow = {
 
 /** PRD §16 — first 60 days */
 export const COST_CAPS: CostCapRow[] = [
-  { provider: 'render', label: 'Render web + Postgres', monthlyCapUsd: 14, autoTrack: false },
+  { provider: 'infra', label: 'Railway web + Postgres + cron', monthlyCapUsd: 12, autoTrack: false },
   { provider: 'claude', label: 'Claude API', monthlyCapUsd: 80, autoTrack: true },
   { provider: 'voyage', label: 'Voyage AI (embeddings)', monthlyCapUsd: 5, autoTrack: true },
   { provider: 'places', label: 'Google Places', monthlyCapUsd: 50, autoTrack: true },
@@ -28,7 +28,7 @@ export const COST_CAPS: CostCapRow[] = [
   { provider: 'mailwarm', label: 'Mailwarm or equivalent', monthlyCapUsd: 50, autoTrack: false },
 ];
 
-export const TOTAL_CAP_USD = 301;
+export const TOTAL_CAP_USD = 299;
 export const WARN_FRACTION = 0.8;
 
 /** Serper Developer tier — ~$0.001/search at volume */

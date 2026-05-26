@@ -1,8 +1,13 @@
 # INSTRUCTIONS — Sobriety Select SDR Agent (SSA)
 
-**Version:** 1.2
+**Version:** 1.3
 **For:** Sonia (operator) using Cursor
 **Companion files:** `.cursorrules` (Cursor reads automatically), `CURSOR_GUIDE.md` (operator manual)
+
+**Changes from v1.2:**
+
+- **Deployment moved from Render to Railway.** Phase 11 prompt creates `railway.toml` + `RAILWAY.md` (web + one `ssa-cron` tick service, not 16 separate crons). `cronTick.ts` + `src/shared/cronSchedule.ts` dispatch PRD §9.1 jobs in Eastern time.
+- **Prompt 7.4 (`refreshIntentSignals`).** Weekly Monday job re-fetches Places ratings and Serper hiring on top open deals; `enabled: true` in `cronSchedule.ts`; daily brief gains 🚨 Hiring spikes section.
 
 **Changes from v1.1:**
 
@@ -1217,6 +1222,36 @@ STOP.
 
 ---
 
+### Prompt 7.4 — refreshIntentSignals (PRD §9.12)
+
+```
+Create ONLY src/pipeline/refreshIntentSignals.ts, src/scripts/refreshGoogleSignals.ts.
+Edit src/shared/cronSchedule.ts (set refreshGoogleSignals enabled: true), src/pipeline/signals.ts (export detectHiring), src/pipeline/sources/places.ts (add fetchPlaceRatings), src/outreach/dailyBrief.ts (🚨 Hiring spikes section).
+
+src/pipeline/refreshIntentSignals.ts — export refreshIntentSignals(prisma):
+
+1. Top 100 open deals: latest Score row per hubspotDealId from last 7 days, sorted by score × expectedCommission DESC.
+2. For each deal: verify still open in HubSpot (not closedwon/closedlost) → resolve company → Lead + Enrichment via hubspotCompanyId.
+3. Re-run detectHiring({ name: lead.name }) from signals.ts. Merge into enrichment.signals.hiring.
+4. If previous hiring.active was false and new hiring.active is true → AuditLog action='intent.hiring-spike' with { leadId, facility, city, state, roleTitles }.
+5. If lead.source === 'gmaps' and sourceMeta.id present → fetchPlaceRatings(placeId) updates Lead.googleRating + googleReviews.
+6. Per-deal try/catch; failures audit refreshIntent.failure. Return summary { dealsConsidered, leadsProcessed, placesRefreshed, hiringSpikes, skipped, fail }.
+
+src/scripts/refreshGoogleSignals.ts — cron wrapper (mirror reactivation.ts): call refreshIntentSignals, audit cron.success/cron.failure entity='refreshGoogleSignals'.
+
+src/pipeline/sources/places.ts — fetchPlaceRatings(placeId): GET places.googleapis.com/v1/places/{id}, FieldMask rating,userRatingCount, logPlacesUsage('places.getPlace').
+
+dailyBrief.ts — after 📬 New replies, add ## 🚨 Hiring spikes (24h): read AuditLog intent.hiring-spike from last 24h, cap 10, list facility + city/state + role titles.
+
+Requires GOOGLE_MAPS_API_KEY + SERPER_API_KEY + HUBSPOT_ACCESS_TOKEN (not Gmail OAuth).
+
+STOP.
+```
+
+**Acceptance:** `CRON_JOB=refreshGoogleSignals tsx src/scripts/runCron.ts` completes with cron.success. Enrichment.signals.hiring updated on a lead tied to an open deal. If Serper returns jobs for a previously inactive lead, AuditLog shows intent.hiring-spike and next daily brief includes the 🚨 section.
+
+---
+
 ## Phase 8 — Voicemail Drops
 
 ### Prompt 8.1 — Twilio + ElevenLabs
@@ -1542,7 +1577,7 @@ Flow:
 6. AuditLog action='cron.success' or 'cron.failure', entity='draftUpsellBatch', meta={ candidates, ok, skipped, fail }.
 7. console.log JSON summary.
 
-After this prompt: add `'0 8 * * *'  →  draftUpsellBatch  (outreach)` to the PRD §9.1 Daily Cron Schedule and to whatever runs your existing crons (Render cron job). 8:00 AM is unoccupied in the current schedule and runs after enrichAll (5:30) so signals are fresh.
+After this prompt: add `'0 8 * * *'  →  draftUpsellBatch  (outreach)` to the PRD §9.1 Daily Cron Schedule and ensure `draftUpsellBatch` is enabled in `src/shared/cronSchedule.ts` (dispatched by `cronTick`). 8:00 AM is unoccupied in the current schedule and runs after enrichAll (5:30) so signals are fresh.
 
 STOP.
 ```
@@ -1653,58 +1688,54 @@ STOP.
 
 ---
 
-## Phase 11 — Deploy to Render
+## Phase 11 — Deploy to Railway
 
-### Prompt 11.1 — render.yaml
+### Prompt 11.1 — railway.toml + RAILWAY.md
 
 ```
-Create ONLY render.yaml at repo root.
+Create ONLY railway.toml and RAILWAY.md at repo root. Do NOT create render.yaml. Do NOT create 16 separate Railway cron services — one cron tick is cheaper.
 
-services:
-  - type: web
-    name: ssa-web
-    runtime: node
-    plan: starter
-    buildCommand: npm install && npx prisma generate && npm run build && npx playwright install --with-deps chromium
-    startCommand: npx prisma migrate deploy && node dist/server.js
-    healthCheckPath: /health
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase: { name: ssa-db, property: connectionString }
-      # for each other env var: { key: NAME, sync: false } so they show in dashboard for manual entry
+Architecture (2 services + Postgres):
+- ssa-web: always-on Express (`npm run start:web` = prisma migrate deploy + node dist/server.js)
+- ssa-cron: exits after each run (`npm run start:cron` = node dist/scripts/cronTick.js)
+- Postgres: Railway plugin; DATABASE_URL via ${{Postgres.DATABASE_URL}}
 
-  # One cron service per scheduled job (PRD §9.1).
-  - type: cron
-    name: ssa-daily-scrape
-    runtime: node
-    schedule: "0 5 * * *"
-    buildCommand: npm install && npx prisma generate && npm run build && npx playwright install --with-deps chromium
-    startCommand: node dist/scripts/dailyScrape.js
-    envVars: # same env block
-  - type: cron
-    name: ssa-enrich
-    schedule: "30 5 * * *"
-    startCommand: node dist/scripts/enrichAll.js
-    # ... etc for all 14 cron jobs in PRD §9.1
+railway.toml (web service — Railway picks this up for the first connected service):
 
-databases:
-  - name: ssa-db
-    plan: starter
-    postgresMajorVersion: 15
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install && npx prisma generate && npm run build && npx playwright install --with-deps chromium"
 
-Output the exact post-deploy steps as a comment block at the top:
-# 1. git push, then in Render: New → Blueprint → connect repo → apply render.yaml
-# 2. Wait for ssa-db to provision
-# 3. Open ssa-web shell: psql $DATABASE_URL -c 'CREATE EXTENSION IF NOT EXISTS vector;'
-# 4. Enter all secrets in Render dashboard
-# 5. Trigger first manual deploy of ssa-web
-# 6. Verify /health green
-# 7. Optionally trigger ssa-daily-scrape manually first
+[deploy]
+startCommand = "npm run start:web"
+healthcheckPath = "/health"
+restartPolicyType = "ON_FAILURE"
+
+ssa-cron is configured in the Railway dashboard (second service from same repo):
+- Same buildCommand as web
+- startCommand: npm run start:cron
+- cronSchedule: */5 * * * *  (UTC — cronTick dispatches PRD §9.1 jobs in America/New_York via src/shared/cronSchedule.ts)
+- No public domain
+- Same env vars as ssa-web (shared variables recommended)
+
+RAILWAY.md must document the full post-deploy checklist:
+
+1. Push to GitHub → Railway New Project → Deploy from GitHub repo
+2. Add PostgreSQL (+ New → Database → PostgreSQL)
+3. ssa-web: use railway.toml (or paste build/start/health from above) → Generate Domain → set PUBLIC_URL
+4. ssa-web + ssa-cron Variables: DATABASE_URL=${{Postgres.DATABASE_URL}} plus every secret from .env.example
+5. Wait for Postgres, then: CREATE EXTENSION IF NOT EXISTS vector; (Railway Postgres Query tab or shell)
+6. Deploy ssa-web; curl https://<domain>/health → 200
+7. Add ssa-cron service (duplicate repo), set cronSchedule */5 * * * *, startCommand npm run start:cron, no domain
+8. One-time local: tsx src/scripts/setupHubspotCustomProperties.ts and npm run kb:reindex
+9. Verify AuditLog has cron.success rows from cronTick; manual test: CRON_JOB=checkCostCaps tsx src/scripts/runCron.ts
+
+Note: Jobs without scripts stay enabled: false in src/shared/cronSchedule.ts (draftFollowups, dropVoicemails).
 
 STOP.
 ```
 
-**Acceptance:** Render Blueprint detects render.yaml on push, applies it. `/health` returns 200 at the Render URL. First manual cron run logs visible.
+**Acceptance:** Railway deploys ssa-web from `railway.toml`. `/health` returns 200 at the Railway public domain. `ssa-cron` tick logs `cron.success` for entity `cronTick` in AuditLog (or manual `CRON_JOB=dailyScrape` run succeeds).
 
 ---
 
@@ -1781,7 +1812,7 @@ Create ONLY CHECKLIST.md at repo root with these checkbox sections:
 - [ ] Serper subscription active (Developer tier)
 - [ ] HubSpot Service Key configured with all required scopes
 - [ ] HubSpot custom properties created (setupHubspotCustomProperties.ts)
-- [ ] Gmail OAuth refresh token in Render env (run gmailAuth.ts locally first)
+- [ ] Gmail OAuth refresh token in Railway env (run gmailAuth.ts locally first)
 - [ ] Twilio number purchased
 - [ ] ElevenLabs voice cloned (Sonia's own voice for authenticity)
 - [ ] SPF, DKIM, DMARC on sobrietyselect.com confirmed via mxtoolbox
@@ -1832,7 +1863,7 @@ STOP.
 
 | Item                               | Monthly cap     |
 | ---------------------------------- | --------------- |
-| Render web + Postgres              | $14             |
+| Railway web + Postgres + cron tick | $12             |
 | Claude API                         | $80             |
 | Voyage AI (embeddings)             | $5              |
 | Google Places                      | $50             |
@@ -1840,7 +1871,7 @@ STOP.
 | Twilio (voice + lookups)           | $30             |
 | ElevenLabs                         | $22             |
 | Mailwarm or equivalent             | $50             |
-| **Total infra+APIs**               | **~$301/month** |
+| **Total infra+APIs**               | **~$299/month** |
 
 
 Break-even at ~2 Select-tier deals/month ($240 × 2 = $480). Target 5+ deals/month by month 3.
@@ -1855,7 +1886,7 @@ Break-even at ~2 Select-tier deals/month ($240 × 2 = $480). Target 5+ deals/mon
 2. ElevenLabs + Twilio voicemail pattern (simplified one-way)
 3. KB markdown + pgvector RAG
 4. Pluggable provider pattern → `src/pipeline/sources/`
-5. Render deployment pattern
+5. Railway deployment pattern (`railway.toml` + `RAILWAY.md` + `cronTick`)
 6. Health endpoint pattern
 
 **Scrapped:**

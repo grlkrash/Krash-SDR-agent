@@ -77,7 +77,7 @@ const detectDirectories = async (
   };
 };
 
-const detectHiring = async (facility: { name: string }): Promise<Signals['hiring']> => {
+export const detectHiring = async (facility: { name: string }): Promise<Signals['hiring']> => {
   const results = await serpapi(
     `site:linkedin.com/jobs "${facility.name}"`,
     HIRING_RESULT_LIMIT,

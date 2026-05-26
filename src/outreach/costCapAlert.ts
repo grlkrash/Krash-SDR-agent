@@ -48,7 +48,7 @@ const aggregateMtdSpend = async (
 const buildProviderRows = (totals: Map<CostProvider, number>): ProviderSpend[] =>
   COST_CAPS.map((cap) => {
     const mtdUsd =
-      cap.provider === 'render'
+      cap.provider === 'infra'
         ? cap.monthlyCapUsd
         : cap.autoTrack
           ? (totals.get(cap.provider) ?? 0)
@@ -112,7 +112,7 @@ const formatReport = (rows: ProviderSpend[], totalMtd: number, now: Date): strin
     '------------------------------------------------',
   ];
   for (const row of rows) {
-    const trackNote = row.autoTrack ? '' : row.provider === 'render' ? ' (fixed)' : ' (manual)';
+    const trackNote = row.autoTrack ? '' : row.provider === 'infra' ? ' (fixed)' : ' (manual)';
     lines.push(
       `${row.label.padEnd(28)} ${fmtUsd(row.mtdUsd).padStart(8)}  ${fmtUsd(row.capUsd).padStart(7)}  ${row.pct.toFixed(0).padStart(3)}%${trackNote}`,
     );
@@ -123,7 +123,7 @@ const formatReport = (rows: ProviderSpend[], totalMtd: number, now: Date): strin
     '',
     'Auto-tracked: Claude, Voyage, Google Places, Serper (via AuditLog cost.usage rows).',
     'Manual check: Twilio, ElevenLabs dashboards; Mailwarm billing page.',
-    'Render is a flat $14/mo — included in total, not usage-based.',
+    'Railway is a flat ~$12/mo — included in total, not usage-based.',
   );
   return lines.join('\n');
 };
@@ -144,7 +144,7 @@ export const checkCostCapsAndAlert = async (prisma: PrismaClient): Promise<CostC
   const trackedMtd = rows
     .filter((r) => r.autoTrack)
     .reduce((sum, r) => sum + r.mtdUsd, 0);
-  const totalMtd = trackedMtd + (capForProvider('render')?.monthlyCapUsd ?? 0);
+  const totalMtd = trackedMtd + (capForProvider('infra')?.monthlyCapUsd ?? 0);
   const report = formatReport(rows, totalMtd, now);
 
   const alerts: string[] = [];
@@ -162,10 +162,10 @@ export const checkCostCapsAndAlert = async (prisma: PrismaClient): Promise<CostC
 
   if (totalMtd >= TOTAL_CAP_USD) {
     candidates.push({
-      provider: 'render',
+      provider: 'infra',
       threshold: '100',
       row: {
-        provider: 'render',
+        provider: 'infra',
         label: 'Total infra+APIs',
         capUsd: TOTAL_CAP_USD,
         mtdUsd: totalMtd,
@@ -175,10 +175,10 @@ export const checkCostCapsAndAlert = async (prisma: PrismaClient): Promise<CostC
     });
   } else if (totalMtd >= TOTAL_CAP_USD * WARN_FRACTION) {
     candidates.push({
-      provider: 'render',
+      provider: 'infra',
       threshold: '80',
       row: {
-        provider: 'render',
+        provider: 'infra',
         label: 'Total infra+APIs',
         capUsd: TOTAL_CAP_USD,
         mtdUsd: totalMtd,

@@ -31,6 +31,7 @@ export const QUERIES = [
 ] as const;
 
 const PLACES_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText';
+const PLACES_GET_URL = 'https://places.googleapis.com/v1/places';
 const FIELD_MASK =
   'places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.userRatingCount,places.rating,places.businessStatus,nextPageToken';
 const PAGE_SIZE = 20;
@@ -132,6 +133,42 @@ const fetchSearchPage = async (
   const json: unknown = await res.json();
   logPlacesUsage('places.searchText');
   return PlacesSearchResponseSchema.parse(json);
+};
+
+const PlaceRatingsSchema = z.object({
+  rating: z.number().optional(),
+  userRatingCount: z.number().optional(),
+});
+
+/** Refresh rating/review count for an existing gmaps place id. */
+export const fetchPlaceRatings = async (
+  placeId: string,
+): Promise<{ rating: number | null; reviewCount: number | null }> => {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (apiKey === undefined || apiKey === '') {
+    throw new Error('GOOGLE_MAPS_API_KEY is not set');
+  }
+
+  const res = await fetch(`${PLACES_GET_URL}/${encodeURIComponent(placeId)}`, {
+    headers: {
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'rating,userRatingCount',
+    },
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Google Places getPlace failed: ${res.status} ${res.statusText} — ${errText}`);
+  }
+
+  const json: unknown = await res.json();
+  logPlacesUsage('places.getPlace');
+  const parsed = PlaceRatingsSchema.parse(json);
+  return {
+    rating: parsed.rating ?? null,
+    reviewCount:
+      parsed.userRatingCount !== undefined ? Math.trunc(parsed.userRatingCount) : null,
+  };
 };
 
 export const scrapePlaces = async (

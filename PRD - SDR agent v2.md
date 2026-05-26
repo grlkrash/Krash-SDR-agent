@@ -1,9 +1,14 @@
 # PRD — Sobriety Select SDR Agent (SSA)
 
-**Version:** 1.2
+**Version:** 1.3
 **Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
 **Last Updated:** May 26, 2026
+
+**Changes from v1.2:**
+
+- **Deployment on Railway.** One web service + one Postgres plugin + one cron service (`cronTick` every 5 min UTC, dispatches PRD §9.1 jobs in Eastern time). See `RAILWAY.md` and `railway.toml`. Cheaper than 16 separate cron services.
+- **`refreshIntentSignals` implemented (§9.12).** Monday 4 AM ET cron refreshes Places ratings + hiring signals on top open deals; hiring flips audit `intent.hiring-spike` for the daily brief.
 
 **Changes from v1.1:**
 
@@ -94,7 +99,7 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 ┌────────────────────────────────────────────────────────────────┐
 │              Sobriety Select SDR Agent (Node.js)               │
 │                                                                │
-│   Cron Jobs (Render Cron)        Express API                  │
+│   Cron tick (Railway, 5 min)     Express API                  │
 │   - scrape  - enrich              /queue   /copilot/ask       │
 │   - draft   - score               /approve /webhook/...       │
 │   - send    - follow-up           /health  /prep-brief        │
@@ -142,7 +147,7 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 |CRM       |HubSpot Free + `@hubspot/api-client` (auth via Service Key — token in `HUBSPOT_ACCESS_TOKEN`, identical bearer-header transport as a private app; scopes managed on the Service Key in HubSpot UI)|
 |Email send|Gmail API via OAuth2 (`sonia@sobrietyselect.com`)|
 |Voice     |Twilio + ElevenLabs TTS (voicemail only)         |
-|Hosting   |Render (web + cron + Postgres)                   |
+|Hosting   |Railway (web + cron + Postgres)                  |
 
 **Explicitly excluded:** Redis, WebSockets, OpenAI, Docker Compose, BullMQ, Turborepo, custom React UI, Salesforce, microservices.
 
@@ -158,7 +163,8 @@ sobriety-select-sdr/
 ├── INSTRUCTIONS.md
 ├── CHECKLIST.md
 ├── README.md
-├── render.yaml
+├── RAILWAY.md
+├── railway.toml
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
@@ -335,6 +341,8 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 |`0 4 * * 1`   |Mon 4am  |`refreshGoogleSignals`|pipeline|
 
 Prep briefs are **generated on demand** via `GET /prep-brief/:dealId` — no cron needed. Sonia hits it 5 minutes before each call.
+
+**Railway deployment:** One always-on web service plus one cron service on `*/5 * * * *` UTC running `cronTick.ts`, which dispatches PRD jobs by Eastern time. See `RAILWAY.md`. Jobs without scripts yet (`draftFollowups`, `dropVoicemails`) stay disabled in `src/shared/cronSchedule.ts`.
 
 ### 9.2 Lead Sourcing (pipeline)
 
@@ -562,13 +570,13 @@ Plus new risk:
 
 ## 16. Deployment & cost ceiling (first 60 days)
 
-Render web $7 + Postgres $7 + Cron free = ~$14/mo infra.
+Railway Hobby $5/mo base + usage-based compute. Web + Postgres + **one** cron tick service (`*/5 * * * *` UTC) ≈ **$12/mo** infra at our volume.
 
 **Monthly caps (infra + APIs):**
 
 | Item | Monthly cap |
 | --- | --- |
-| Render web + Postgres | $14 |
+| Railway web + Postgres + cron | $12 |
 | Claude API | $80 |
 | Voyage AI (embeddings) | $5 |
 | Google Places | $50 |
@@ -576,13 +584,13 @@ Render web $7 + Postgres $7 + Cron free = ~$14/mo infra.
 | Twilio (voice + lookups) | $30 |
 | ElevenLabs | $22 |
 | Mailwarm or equivalent | $50 |
-| **Total infra+APIs** | **~$301/month** |
+| **Total infra+APIs** | **~$299/month** |
 
 Break-even at ~2 Select-tier deals/month ($240 × 2 = $480). Target 5+ deals/month by month 3.
 
 Signals enrichment adds ~$0.003/lead in Serper marginal cost (~$15 at 5,000 leads in month 1); the $50 Serper cap above covers all search use including signals.
 
-**Cost cap alerts (v1.2).** `checkCostCaps` runs daily at 5:30 PM ET. It sums `AuditLog` rows with `action='cost.usage'` (written by Claude, Serper, Voyage, and Places wrappers) and emails `BRIEF_RECIPIENT` when any auto-tracked provider crosses 80% or 100% of its cap, or when estimated total crosses 80%/100% of $301. Twilio, ElevenLabs, and Mailwarm are manual dashboard checks for now. Alert dedup: one email per provider/threshold per calendar month via `costCap.alert-sent` AuditLog rows. Marginal cost of the alert system itself: ~$0 (existing Gmail + Postgres; one extra cron/day).
+**Cost cap alerts (v1.2).** `checkCostCaps` runs daily at 5:30 PM ET via `cronTick`. It sums `AuditLog` rows with `action='cost.usage'` and emails `BRIEF_RECIPIENT` at 80%/100% of caps or ~$299 total. Twilio, ElevenLabs, and Mailwarm are manual dashboard checks. Marginal alert cost: ~$0.
 
 -----
 
