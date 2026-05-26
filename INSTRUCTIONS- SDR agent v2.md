@@ -833,31 +833,40 @@ STOP.
 Create ONLY src/outreach/sender.ts, src/shared/businessDays.ts, AND src/scripts/sendApproved.ts.
 
 src/shared/businessDays.ts:
-Export `businessDay(date: Date, addDays: number): Date`. Skip Saturdays and Sundays. Under 20 lines.
+Export `businessDay(date: Date, addDays: number): Date`. Skip Saturdays and Sundays. Under 20 lines. Use `setDate` / `getDate` (local time) rather than ms arithmetic — DST transitions otherwise shift the result by an hour and edge-case the Sunday landing check.
 
 src/outreach/sender.ts:
 Export `sendApprovedDraft(draftId: string): Promise<void>`.
 
 Flow:
-1. Load Draft + Lead + Enrichment. Skip if status !== 'approved'. Skip if kind === 'voicemail' (different code path in Phase 8).
-2. Compute targetEmail: enrichment.ownerEmail || guessEmail(enrichment.ownerName, lead.website). If null: AuditLog and update draft.status='sent-suppressed'.
-3. Check Suppression { email: targetEmail }. If found: draft.status='sent-suppressed'; AuditLog; return.
-4. Call sendEmail({ to: targetEmail, subject: draft.subject, body: draft.body }).
-5. Update draft.status='sent', sentAt=now, gmailMessageId.
-6. Log HubSpot engagement:
-   hs.crm.objects.basicApi.create('emails', {
-     properties: { hs_timestamp: Date.now().toString(), hs_email_direction: 'EMAIL', hs_email_subject: subject, hs_email_html: body, hs_email_status: 'SENT', hubspot_owner_id: process.env.HUBSPOT_OWNER_ID ?? '' },
-     associations: [associate to contact + company via lead.hubspotCompanyId]
+1. Load Draft + Lead + Enrichment. Skip silently if status !== 'approved'. Skip silently if kind === 'voicemail' (different code path in Phase 8).
+2. Compute targetEmail: enrichment.ownerEmail || guessEmail(enrichment.ownerName, lead.website). If null: update draft.status='sent-suppressed', AuditLog 'sender.no-email' { leadId }, return.
+3. Check Suppression { email: targetEmail }. If found: update draft.status='sent-suppressed', AuditLog 'sender.suppressed' { leadId, email, reason } (carry the suppression reason so kill-lead vs. opt-out is distinguishable in audit), return.
+4. Call sendEmail({ to: targetEmail, subject: draft.subject ?? '', body: draft.body }) → gmailMessageId.
+5. Update draft.status='sent', sentAt=now, gmailMessageId. AuditLog 'sender.sent' { leadId, email, gmailMessageId }.
+6. Log HubSpot engagement (best-effort — see v1.2 additions below):
+   hs.crm.objects.emails.basicApi.create({
+     properties: { hs_timestamp: sentAt.getTime().toString(), hs_email_direction: 'EMAIL', hs_email_subject: subject ?? '', hs_email_html: body, hs_email_status: 'SENT', hubspot_owner_id: process.env.HUBSPOT_OWNER_ID ?? '' },
+     associations: []
    })
-   Save engagement.id to draft.hubspotEmailId.
+   Then associate post-create via hs.crm.associations.v4.basicApi.createDefault('emails', emailId, 'contacts', contactId) and the same for ('companies', lead.hubspotCompanyId). HubSpot resolves the association type IDs internally — never hard-code 188/198/etc.
+   Save engagement.id to draft.hubspotEmailId. AuditLog 'hubspotEngagement.logged' { emailId, contactId, companyId }.
 
 src/scripts/sendApproved.ts:
-Find all Drafts where status='approved', not yet sent, kind !== 'voicemail'. Process with 200ms pacing. AuditLog cron success/failure.
+Find all Drafts where status='approved', sentAt: null, kind !== 'voicemail'. Process serially (NOT concurrent — Gmail's per-second send quota and HubSpot's engagement-create rate limit both prefer it) with 200ms pacing. Per-draft failures audit 'sender.failure' { error } but don't break the loop. AuditLog 'cron.success' / 'cron.failure' { total, ok, fail } at end.
+
+**HubSpot best-effort guarantee (v1.2 addition).** Wrap step 6 in a try/catch that audits `hubspotEngagement.failed` { error } and returns without re-throwing. By step 6 the Gmail send is already irreversible (status flipped to 'sent' in step 5) — propagating a HubSpot 5xx would mis-count a successful send as a cron failure and operator confusion compounds. The DB-side `Draft.status='sent'` is the source of truth; HubSpot timeline is decoration.
+
+**No-anchor skip (v1.2 addition).** Before step 6's create call, look up the HubSpot contact id via `hs.crm.contacts.searchApi.doSearch` filtered by email (limit 1). If contact lookup returns null AND `lead.hubspotCompanyId` is null, audit `hubspotEngagement.skipped-no-associations` { targetEmail } and return — an unanchored engagement would never surface in any HubSpot timeline, so creating one is just orphan trash that pollutes the inbox view. Mirrors the same skip path in `src/outreach/logSentEmail.ts`.
+
+**gmailMessageId source (v1.2 addition).** The value persisted is the Message-ID header we generate ourselves inside `src/shared/gmail.ts` (format `<uuid>@sobrietyselect.com`), not Gmail's internal API id. This is what the Phase 6.4 sequencer's reply matching compares against parsed `In-Reply-To` / `References` headers — using the API id would silently break threading on every follow-up.
+
+**Defense-in-depth filter (v1.2 addition).** The cron query already filters `kind !== 'voicemail'`, but `sendApprovedDraft` re-checks both `status === 'approved'` and `kind !== 'voicemail'` so direct callers (manual `tsx -e`, future API surfaces) can't accidentally send a voicemail draft as email.
 
 STOP.
 ```
 
-**Acceptance:** Approve a draft in /queue → next sendApproved run → email arrives at test address → HubSpot engagement appears.
+**Acceptance:** Approve a draft in /queue → run `tsx src/scripts/sendApproved.ts` → email arrives at the address derived from `enrichment.ownerEmail` (or the `firstname@domain` guess fallback). DB row shows `status='sent'`, `sentAt` populated, `gmailMessageId` set (matches the `<uuid>@sobrietyselect.com` Message-ID header in Gmail), `hubspotEmailId` set. HubSpot contact (and/or company, if `lead.hubspotCompanyId` is non-null) timeline shows the new Email engagement with the subject + body. AuditLog contains `sender.sent` and `hubspotEngagement.logged`. Negative path: simulate a HubSpot outage (point HUBSPOT_ACCESS_TOKEN at garbage, re-run) → email still sends, draft still flips to `sent`, AuditLog gets `hubspotEngagement.failed` instead of crashing the cron.
 
 ---
 
