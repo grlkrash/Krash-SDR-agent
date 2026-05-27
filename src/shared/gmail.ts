@@ -6,8 +6,8 @@ import { signUnsubToken } from './unsubscribeToken.js';
 // Sobriety Select is a registered DBA — per legal requirement, customer-facing
 // surfaces (footer, branding, From line) must use the DBA only, never the
 // parent LLC name.
-const COMPANY_FOOTER_LINE =
-  'Sobriety Select, 105 Maxess Road, Suite 124, Melville, NY 11747';
+const COMPANY_NAME = 'Sobriety Select';
+const COMPANY_ADDRESS = '105 Maxess Road, Suite 124, Melville, NY 11747';
 const UNSUB_MAILTO = 'mailto:unsubscribe@sobrietyselect.com';
 const MESSAGE_ID_DOMAIN = 'sobrietyselect.com';
 
@@ -54,15 +54,48 @@ const buildUnsubUrl = (to: string): string => {
   return `${publicUrl}/unsubscribe?token=${signUnsubToken(to)}`;
 };
 
+// Inline styles only — external CSS is stripped by most clients.
+const buildHtmlFooter = (unsubUrl: string): string => {
+  const href = encodeURI(unsubUrl);
+  return [
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"',
+    ' style="margin-top:28px;border-top:1px solid #e5e5e5;">',
+    '<tr><td align="center" style="padding:16px 12px 8px;',
+    'font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:#666666;">',
+    `<strong style="color:#333333;font-weight:700;">${escapeHtml(COMPANY_NAME)}</strong><br>`,
+    `${escapeHtml(COMPANY_ADDRESS)}`,
+    '</td></tr>',
+    '<tr><td align="center" style="padding:0 12px 12px;',
+    'font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.4;">',
+    `<a href="${href}" style="color:#888888;text-decoration:underline;">Unsubscribe</a>`,
+    '</td></tr></table>',
+  ].join('');
+};
+
+const buildPlainFooter = (unsubUrl: string): string =>
+  [
+    '',
+    '---',
+    COMPANY_NAME,
+    COMPANY_ADDRESS,
+    '',
+    `Unsubscribe: ${unsubUrl}`,
+  ].join('\n');
+
 type EmailBodies = { plain: string; html: string; unsubUrl: string };
 
 const buildBodies = (opts: { to: string; body: string }): EmailBodies => {
   const unsubUrl = buildUnsubUrl(opts.to);
-  const plainFooter = ['', '---', COMPANY_FOOTER_LINE, `Unsubscribe: ${unsubUrl}`].join('\n');
-  const htmlFooter = `<hr><p>${escapeHtml(COMPANY_FOOTER_LINE)}<br><a href="${encodeURI(unsubUrl)}">Unsubscribe</a></p>`;
   return {
-    plain: `${opts.body}${plainFooter}`,
-    html: `<!DOCTYPE html><html><body>${plainTextToHtml(opts.body)}${htmlFooter}</body></html>`,
+    plain: `${opts.body}${buildPlainFooter(unsubUrl)}`,
+    html: [
+      '<!DOCTYPE html><html><body style="margin:0;padding:0;">',
+      `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222222;">`,
+      plainTextToHtml(opts.body),
+      '</div>',
+      buildHtmlFooter(unsubUrl),
+      '</body></html>',
+    ].join(''),
     unsubUrl,
   };
 };
