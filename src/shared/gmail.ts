@@ -34,30 +34,67 @@ const encodeHeaderValue = (value: string): string => {
   return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
 };
 
-const buildFooter = (to: string): string => {
+const escapeHtml = (text: string): string =>
+  text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const plainTextToHtml = (body: string): string =>
+  escapeHtml(body).replace(/\r\n/g, '\n').replace(/\n/g, '<br>\n');
+
+const encodeBase64Body = (text: string): string =>
+  Buffer.from(text, 'utf8')
+    .toString('base64')
+    .replace(/(.{76})/g, '$1\r\n');
+
+const buildUnsubUrl = (to: string): string => {
   const publicUrl = requireEnv('PUBLIC_URL').replace(/\/+$/, '');
-  const unsubUrl = `${publicUrl}/unsubscribe?token=${signUnsubToken(to)}`;
-  return ['', '---', COMPANY_FOOTER_LINE, `Unsubscribe: ${unsubUrl}`].join('\n');
+  return `${publicUrl}/unsubscribe?token=${signUnsubToken(to)}`;
 };
+
+type EmailBodies = { plain: string; html: string; unsubUrl: string };
+
+const buildBodies = (opts: { to: string; body: string }): EmailBodies => {
+  const unsubUrl = buildUnsubUrl(opts.to);
+  const plainFooter = ['', '---', COMPANY_FOOTER_LINE, `Unsubscribe: ${unsubUrl}`].join('\n');
+  const htmlFooter = `<hr><p>${escapeHtml(COMPANY_FOOTER_LINE)}<br><a href="${encodeURI(unsubUrl)}">Unsubscribe</a></p>`;
+  return {
+    plain: `${opts.body}${plainFooter}`,
+    html: `<!DOCTYPE html><html><body>${plainTextToHtml(opts.body)}${htmlFooter}</body></html>`,
+    unsubUrl,
+  };
+};
+
+const buildMimePart = (contentType: string, body: string, boundary: string): string =>
+  [
+    `--${boundary}`,
+    `${contentType}; charset="UTF-8"`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    encodeBase64Body(body),
+  ].join('\r\n');
 
 const buildRaw = (opts: {
   from: string;
   to: string;
   subject: string;
-  body: string;
+  plainBody: string;
+  htmlBody: string;
   messageId: string;
   unsubUrl: string;
   inReplyTo?: string;
   references?: string;
 }): string => {
+  const boundary = `----=_Part_${randomUUID()}`;
   const headers: string[] = [
     `From: ${opts.from}`,
     `To: ${opts.to}`,
     `Subject: ${encodeHeaderValue(opts.subject)}`,
     `Message-ID: <${opts.messageId}>`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset="UTF-8"',
-    'Content-Transfer-Encoding: base64',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
     `List-Unsubscribe: <${opts.unsubUrl}>, <${UNSUB_MAILTO}>`,
     'List-Unsubscribe-Post: List-Unsubscribe=One-Click',
   ];
@@ -66,11 +103,12 @@ const buildRaw = (opts: {
     headers.push(`In-Reply-To: <${opts.inReplyTo}>`);
     headers.push(`References: <${ref}>`);
   }
-  // Base64-encode body in 76-char lines per RFC 2045 to safely carry UTF-8.
-  const bodyB64 = Buffer.from(opts.body, 'utf8')
-    .toString('base64')
-    .replace(/(.{76})/g, '$1\r\n');
-  return [...headers, '', bodyB64].join('\r\n');
+  const parts = [
+    buildMimePart('Content-Type: text/plain', opts.plainBody, boundary),
+    buildMimePart('Content-Type: text/html', opts.htmlBody, boundary),
+    `--${boundary}--`,
+  ].join('\r\n');
+  return `${headers.join('\r\n')}\r\n\r\n${parts}\r\n`;
 };
 
 export const sendEmail = async (opts: {
@@ -81,18 +119,17 @@ export const sendEmail = async (opts: {
   references?: string;
 }): Promise<string> => {
   const from = requireEnv('GMAIL_FROM');
-  const publicUrl = requireEnv('PUBLIC_URL').replace(/\/+$/, '');
-  const unsubUrl = `${publicUrl}/unsubscribe?token=${signUnsubToken(opts.to)}`;
+  const { plain, html, unsubUrl } = buildBodies({ to: opts.to, body: opts.body });
   // Self-generated Message-ID so we can return it immediately and downstream
   // reply matching can compare it against parsed In-Reply-To / References.
   const messageId = `${randomUUID()}@${MESSAGE_ID_DOMAIN}`;
 
-  const fullBody = `${opts.body}${buildFooter(opts.to)}`;
   const rawMessage = buildRaw({
     from,
     to: opts.to,
     subject: opts.subject,
-    body: fullBody,
+    plainBody: plain,
+    htmlBody: html,
     messageId,
     unsubUrl,
     inReplyTo: opts.inReplyTo,
