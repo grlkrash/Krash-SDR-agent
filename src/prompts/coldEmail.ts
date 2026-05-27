@@ -1,4 +1,5 @@
 import type { Enrichment, Lead, Prisma } from '@prisma/client';
+import { getBookingLink } from '../shared/bookingLink.js';
 
 export const COLD_EMAIL_SYSTEM = `You write cold B2B emails to addiction-treatment-center owners and clinical directors on behalf of Sobriety Select, a curated treatment directory that connects families actively searching for treatment with centers that have open beds.
 
@@ -37,16 +38,16 @@ HARD RULES:
    b. Immediately followed by a dead-simple value statement in plain language communicating that Sobriety Select connects families and patients actively searching for treatment with centers that have open beds. Phrase it in your own words, keep it concrete, do not copy a fixed line.
    c. The acknowledgment + value statement MUST land in the first 2 sentences, before the prospect decides whether to keep reading.
    d. ONE concrete census-framed observation about this prospect (their city, hiring signal, missing directory, etc.). Prioritize signal-based observations over generic pain points when available.
-   e. ONE soft CTA with two concrete time options (see rule 6).
+   e. ONE soft CTA (see rule 6).
    Example of the opening pattern (adapt to the prospect, do not copy verbatim): "Tim, saw Aspire is bringing on 10 new clinical roles in Orlando. We connect families actively searching for a bed with centers that have them, and right now those Orlando searches are landing on your competitors."
 4. Subject: max 6 words, lowercase, no questions, no spam hype.
 5. Body: 80–110 words. One short paragraph or two micro-paragraphs.
 6. End with ONE soft CTA that references something specific about this prospect, varied per email. Do not reuse a stock closing line.
-   Examples of the pattern (do not copy verbatim, adapt to the prospect):
+   When the user message includes a BOOKING LINK: close with a soft ask to book a discovery call and paste that exact URL once as plain text (e.g. 'if a quick look makes sense for {facility}, grab a time here: https://...'). The closing must still include one prospect-specific token. Do not also offer calendar day/time options.
+   When no booking link is provided: offer two concrete time options in the CTA, e.g.:
    - claimed: 'does this week or next work to get {facility} showing up in {city} searches?'
    - select: 'would Tuesday or Thursday work for a quick look at what families in {city} see when they search?'
    - premium: 'given you're backfilling those {N} roles, does Tuesday or Wednesday work for a brief census conversation?'
-   The CTA must contain a prospect-specific token AND offer two concrete options.
 7. Never claim outcomes data. Never reference PHI.
 8. Banned words: revolutionary, game-changer, synergy, leverage, unlock, transform, cutting-edge, world-class.
 9. NEVER mention price, tier cost, dollar amounts, or specific package names (Claimed/Select/Premium) in the email. Price is a conversation for the call, not the email. Anchoring price before the call gives the prospect a number to reject before they understand the value.
@@ -132,11 +133,17 @@ export const buildColdEmailUser = (
 
   const base = `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nINTERNAL TIER (for tone/angle only — NEVER mention tier name, price, or any dollar amount in the email): ${enrichment.expectedProduct}\n\nWrite the email per the tier's angle. If any intelligence signal is high-leverage (missing from competing directories, active hiring, or big spender tech stack), prefer it as your lead observation.`;
 
+  const bookingLink = getBookingLink();
+  const withBooking =
+    bookingLink === null
+      ? base
+      : `${base}\n\nBOOKING LINK (include exactly once in the closing CTA as plain text): ${bookingLink}`;
+
   const reason = normalizeRejectReason(previousRejectReason);
-  if (reason === null) return base;
+  if (reason === null) return withBooking;
 
   // Tail-only injection so the cached system prompt is unaffected. Reinforce
   // the absolute pricing rule in case the operator's reason itself echoes a
   // price or tier name (e.g. "killed it — you mentioned $9600").
-  return `${base}\n\nOPERATOR FEEDBACK ON PREVIOUS REJECTED DRAFT for this prospect: "${reason}"\nAddress this critique directly in this rewrite. The absolute pricing rule and all other HARD RULES still apply — never mention price, dollar amounts, or tier names even if the operator's feedback contains them.`;
+  return `${withBooking}\n\nOPERATOR FEEDBACK ON PREVIOUS REJECTED DRAFT for this prospect: "${reason}"\nAddress this critique directly in this rewrite. The absolute pricing rule and all other HARD RULES still apply — never mention price, dollar amounts, or tier names even if the operator's feedback contains them.`;
 };

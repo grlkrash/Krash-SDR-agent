@@ -7,8 +7,9 @@
 
 import type { Enrichment, Lead, Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { getBookingLink } from '../shared/bookingLink.js';
 
-export const NUDGE_SYSTEM = `Write a short check-in to a treatment-center prospect we recently corresponded with but who has gone quiet. Reference the prior thread vaguely ('after our chat last week', 'following up on my note'). One specific value-prop hook tied to a known fact about THEIR facility (named missing directory, hiring role, detected tech, owner name). End with a clear ask: 15-min call OR a yes/no question. 60 words max. No greeting fluff. No 'just checking in'. No pricing, no tier names ('Claimed', 'Select', 'Premium'), no dollar amounts.
+export const NUDGE_SYSTEM = `Write a short check-in to a treatment-center prospect we recently corresponded with but who has gone quiet. Reference the prior thread vaguely ('after our chat last week', 'following up on my note'). One specific value-prop hook tied to a known fact about THEIR facility (named missing directory, hiring role, detected tech, owner name). End with a clear ask: when a BOOKING LINK is provided in the user message, close with a soft ask to book and paste that URL once as plain text; otherwise a 15-min call ask OR a yes/no question. 60 words max. No greeting fluff. No 'just checking in'. No pricing, no tier names ('Claimed', 'Select', 'Premium'), no dollar amounts.
 
 Output ONLY valid JSON. No preamble, no markdown fences. Schema: { "subject": string, "body": string }`;
 
@@ -76,10 +77,15 @@ export const buildNudgeUser = (
     lines.push('signals:');
     for (const sig of signals) lines.push(`  - ${sig}`);
   }
-  return [
+  const parts = [
     lines.join('\n'),
     '',
     'Prior thread tone reference:',
     priorDraftBody,
-  ].join('\n');
+  ];
+  const bookingLink = getBookingLink();
+  if (bookingLink !== null) {
+    parts.push('', `BOOKING LINK (include exactly once in the closing as plain text): ${bookingLink}`);
+  }
+  return parts.join('\n');
 };

@@ -6,8 +6,9 @@
 // so the model can ground its response in what it actually pitched.
 
 import type { Draft, Enrichment, Lead } from '@prisma/client';
+import { getBookingLink } from '../shared/bookingLink.js';
 
-export const REPLIED_SYSTEM = `Draft a short, no-fluff response to this reply. Match their energy. Move toward a 15-min discovery call OR answer their direct question. 60 words max. No greeting fluff, no closing fluff. Match their tone.`;
+export const REPLIED_SYSTEM = `Draft a short, no-fluff response to this reply. Match their energy. Move toward booking a discovery call (use the BOOKING LINK from the user message when provided — paste the URL once as plain text) OR answer their direct question. 60 words max. No greeting fluff, no closing fluff. Match their tone.`;
 
 type ColdDraftFacts = Pick<Draft, 'subject' | 'body'>;
 type LeadFacts = Pick<Lead, 'name' | 'city' | 'state' | 'website'>;
@@ -34,7 +35,7 @@ export const buildRepliedUser = (
     signals: enrichment?.signals ?? null,
   };
 
-  return [
+  const lines = [
     'ORIGINAL COLD EMAIL (this is what they replied to):',
     `Subject: ${coldDraft.subject ?? ''}`,
     '',
@@ -47,7 +48,11 @@ export const buildRepliedUser = (
     // tone-only, never name it, never anchor price before the discovery call.
     'PROSPECT CONTEXT (internal tier is for tone only — never name the tier, never mention price):',
     JSON.stringify(context, null, 2),
-    '',
-    'Write the reply.',
-  ].join('\n');
+  ];
+  const bookingLink = getBookingLink();
+  if (bookingLink !== null) {
+    lines.push('', `BOOKING LINK (include exactly once when inviting them to book): ${bookingLink}`);
+  }
+  lines.push('', 'Write the reply.');
+  return lines.join('\n');
 };
