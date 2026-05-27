@@ -16,6 +16,7 @@ export type ApplyExclusionInput = {
   row: ExclusionImportRow;
   matchConfidence: MatchConfidence;
   sourceFile: string;
+  sourceTag?: string;
 };
 
 export const applyExclusionToLead = async (
@@ -27,7 +28,8 @@ export const applyExclusionToLead = async (
     excludeFromCold: true,
     kind: input.kind,
     tier: input.row.tier,
-    source: input.kind === 'directory-listed' ? 'directory-import' : 'client-import',
+    source: input.sourceTag
+      ?? (input.kind === 'directory-listed' ? 'directory-import' : 'client-import'),
     importedAt,
     matchConfidence: input.matchConfidence,
     externalId: input.row.externalId,

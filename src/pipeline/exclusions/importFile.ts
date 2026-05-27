@@ -5,7 +5,7 @@ import type { ExclusionKind } from '../../shared/exclusion.js';
 import { parseCsv, rowToRecord } from './parseCsv.js';
 import { normalizeImportRow } from './normalizeRow.js';
 import { applyExclusionToLead } from './applyExclusion.js';
-import { buildLeadIndex, matchImportRowToLead } from './matchLead.js';
+import { buildLeadIndex, matchRowToLead } from './matchLead.js';
 
 export type ImportKind = 'directory' | 'client';
 
@@ -68,7 +68,7 @@ export const importExclusionCsv = async (
       continue;
     }
 
-    const match = matchImportRowToLead(row, index);
+    const match = matchRowToLead(row, index, leads);
     if (match.status === 'unmatched') {
       result.unmatched += 1;
       await prisma.auditLog.create({

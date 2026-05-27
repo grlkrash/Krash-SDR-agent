@@ -107,3 +107,33 @@ export const matchImportRowToLead = (
 
   return { status: 'unmatched' };
 };
+
+const baseFacilityName = (name: string): string =>
+  name.replace(/\s*\([^)]+\)\s*$/, '').trim();
+
+/** Directory scrape + CSV rows with parenthetical/glued city labels. */
+export const matchRowToLead = (
+  row: ExclusionImportRow,
+  index: LeadIndex,
+  leads: LeadCandidate[],
+): MatchResult => {
+  const strict = matchImportRowToLead(row, index);
+  if (strict.status === 'matched') return strict;
+
+  if (row.city === null || row.state === null) return strict;
+  const baseNorm = normalizeName(baseFacilityName(row.name));
+  const city = row.city.toLowerCase();
+  const state = row.state.toUpperCase();
+  const hits = leads.filter(
+    (l) => l.nameNormalized === baseNorm
+      && l.city.toLowerCase() === city
+      && l.state.toUpperCase() === state,
+  );
+  if (hits.length === 1) {
+    return { status: 'matched', leadId: hits[0].id, confidence: 'name-city-state' };
+  }
+  if (hits.length > 1) {
+    return { status: 'ambiguous', leadIds: hits.map((l) => l.id), confidence: 'name-city-state' };
+  }
+  return strict;
+};

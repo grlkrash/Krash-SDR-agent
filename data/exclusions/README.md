@@ -12,6 +12,23 @@ Drop spreadsheets here so cold outreach skips facilities already on Sobriety Sel
 
 **Do not commit real CSVs** — they may contain PII. Only `.gitkeep` files are tracked.
 
+## Automatic directory scrape (daily cron)
+
+Every day at **6:15 AM ET** (before `draftColdBatch`), `syncDirectoryExclusions`:
+
+1. Renders [sobrietyselect.com/centers](https://sobrietyselect.com/centers) with Playwright
+2. Matches facilities to your `Lead` rows
+3. Flags matches as `directory-listed` (cold excluded, not `doNotContact`)
+4. Logs `hubspotCrossoverCount` — HubSpot-synced leads that also appear on the public directory
+
+Manual run:
+
+```bash
+npm run exclusions:sync-directory
+```
+
+When Mark’s CSV arrives, still run `exclusions:import` — it is more complete than the public scrape.
+
 ## Run import
 
 From repo root, with `DATABASE_URL` pointing at your DB (local or production):
