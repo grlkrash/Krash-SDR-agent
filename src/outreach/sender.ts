@@ -16,6 +16,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/companies/models/Filter.js';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import { sendEmail } from '../shared/gmail.js';
+import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
 
 const HUBSPOT_EMAIL_DIRECTION = 'EMAIL';
@@ -126,6 +127,19 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
 
   const lead = draft.lead;
   const enrichment = lead.enrichment;
+
+  const coldAxis =
+    draft.kind === 'cold'
+    || draft.kind.startsWith('followup-');
+  if (coldAxis && isExcludedFromCold(lead)) {
+    await prisma.draft.update({
+      where: { id: draftId },
+      data: { status: 'sent-suppressed' },
+    });
+    await audit('sender.excluded', draftId, { leadId: lead.id, kind: draft.kind });
+    return;
+  }
+
   const targetEmail =
     enrichment?.ownerEmail
       ?? guessEmail(enrichment?.ownerName ?? null, lead.website);

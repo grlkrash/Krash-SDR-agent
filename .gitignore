@@ -5,3 +5,6 @@ dist
 .DS_Store
 playwright-report
 test-results
+data/exclusions/incoming/**/*.csv
+data/exclusions/processed/*
+!data/exclusions/processed/.gitkeep

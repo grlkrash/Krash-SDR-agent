@@ -8,6 +8,7 @@ import {
   COLD_EMAIL_SYSTEM,
   buildColdEmailUser,
 } from '../prompts/coldEmail.js';
+import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
 import { scanLeaks } from './leakScan.js';
 
@@ -92,6 +93,11 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
   // catches the case where neither email nor phone was known.
   if (lead.doNotContact) {
     await audit('draftCold.do-not-contact', leadId, {});
+    return null;
+  }
+
+  if (isExcludedFromCold(lead)) {
+    await audit('draftCold.excluded', leadId, {});
     return null;
   }
 

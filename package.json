@@ -11,6 +11,7 @@
     "start:cron": "node dist/scripts/cronTick.js",
     "cron:one": "node dist/scripts/runCron.js",
     "kb:reindex": "tsx src/scripts/reindexKB.ts",
+    "exclusions:import": "tsx src/scripts/importExclusions.ts",
     "migrate": "prisma migrate dev",
     "test": "vitest run",
     "test:watch": "vitest",

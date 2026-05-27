@@ -4,6 +4,7 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { draftColdEmail } from '../outreach/draftCold.js';
+import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
 
 const BATCH_SIZE = 30;
@@ -41,6 +42,7 @@ try {
   const eligible: string[] = [];
   for (const lead of candidates) {
     if (lead.enrichment === null) continue;
+    if (isExcludedFromCold(lead)) continue;
     const targetEmail = lead.enrichment.ownerEmail
       ?? guessEmail(lead.enrichment.ownerName, lead.website);
     if (targetEmail === null) continue;

@@ -28,6 +28,7 @@ import { guessEmail } from '../shared/guessEmail.js';
 import { businessDay } from '../shared/businessDays.js';
 import { FOLLOWUP_TEMPLATES } from '../prompts/followUpTemplates.js';
 import { getBookingLink } from '../shared/bookingLink.js';
+import { isExcludedFromCold } from '../shared/exclusion.js';
 
 const SEQUENCE_KINDS = ['cold', 'followup-2', 'followup-3', 'followup-4', 'followup-5'];
 const SENT_STATUSES = ['sent', 'auto-sent'];
@@ -180,6 +181,11 @@ export const runSequenceStep = async (leadId: string): Promise<void> => {
   const enrichment = lead.enrichment;
   if (enrichment === null) return;
   if (lead.doNotContact) return;
+
+  if (isExcludedFromCold(lead)) {
+    await audit('sequencer.excluded', state.coldDraft.id, { leadId });
+    return;
+  }
 
   const template = FOLLOWUP_TEMPLATES[state.nextStep];
   if (template === undefined) return;

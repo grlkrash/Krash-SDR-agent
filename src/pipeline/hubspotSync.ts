@@ -19,6 +19,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/companies/models/Filter.js';
 import { hs, hsRetry } from '../shared/hubspot.js';
+import { extractDomain } from '../shared/domain.js';
 import { guessEmail } from '../shared/guessEmail.js';
 import type { Signals } from './signals.js';
 
@@ -49,19 +50,6 @@ const paced = async <T>(fn: () => Promise<T>): Promise<T> => {
   const result = await hsRetry(fn);
   await sleep(PACING_MS);
   return result;
-};
-
-const extractDomain = (website: string | null): string | null => {
-  if (website === null || website === '') return null;
-  let hostname: string;
-  try {
-    const withProtocol = /^https?:\/\//i.test(website) ? website : `http://${website}`;
-    hostname = new URL(withProtocol).hostname;
-  } catch {
-    return null;
-  }
-  const domain = hostname.replace(/^www\./i, '').toLowerCase();
-  return domain === '' ? null : domain;
 };
 
 const splitName = (full: string | null): { firstname: string; lastname: string } => {
