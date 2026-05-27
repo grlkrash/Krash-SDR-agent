@@ -1,6 +1,6 @@
-# SSA web service — Railway config-as-code.
-# Cron service: duplicate this repo in Railway, set startCommand to `npm run start:cron`
-# and cronSchedule to `*/5 * * * *`. See RAILWAY.md.
+# SSA web service (ssa-web) — Railway config-as-code.
+# ssa-cron MUST NOT use this file — it forces start:web. Use railway.cron.toml instead
+# (Settings → Config file path → /railway.cron.toml). See RAILWAY.md §3.
 
 [build]
 builder = "NIXPACKS"

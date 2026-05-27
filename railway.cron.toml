@@ -1,0 +1,11 @@
+# SSA cron service — point Railway ssa-cron at this file (Settings → Config file path: /railway.cron.toml).
+# The root railway.toml is for ssa-web only (start:web + /health).
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "npx prisma generate && npm run build && npx playwright install --with-deps chromium"
+
+[deploy]
+startCommand = "npm run start:cron"
+cronSchedule = "*/5 * * * *"
+restartPolicyType = "ON_FAILURE"

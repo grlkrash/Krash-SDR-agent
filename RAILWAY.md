@@ -46,21 +46,28 @@ Or use the committed `railway.toml` (Railway picks it up automatically for the f
 
 ## 3. Cron service (`ssa-cron`)
 
-Duplicate the repo service (same GitHub repo, same build command):
+Duplicate the repo service (same GitHub repo, same build command).
 
-Settings → **Deploy** → Start command:
+### Critical: use `railway.cron.toml`, not `railway.toml`
 
-```bash
-npm run start:cron
-```
+The root `railway.toml` sets `startCommand = "npm run start:web"`. Config-as-code **overrides** the Railway UI, so you cannot fix cron by editing Start Command in the dashboard while both services share `railway.toml`.
 
-Settings → **Cron Schedule** (UTC):
+On **ssa-cron** only:
 
-```
-*/5 * * * *
+1. **Settings** → **Config-as-code** (or “Railway config file”)  
+2. Set path to: **`/railway.cron.toml`**  
+3. Save and **Redeploy**
+
+That file sets:
+
+```toml
+startCommand = "npm run start:cron"
+cronSchedule = "*/5 * * * *"
 ```
 
 Railway requires cron services to **exit when done** — `cronTick.ts` does this.
+
+**ssa-web** keeps the default `/railway.toml` (start:web + `/health`).
 
 ## 4. Shared environment variables (required for startup)
 
