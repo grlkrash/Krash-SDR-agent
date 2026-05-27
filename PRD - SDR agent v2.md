@@ -13,6 +13,7 @@
 **Changes from v1.2 (continued):**
 
 - **`syncToHubspot` on daily cron (5:45 AM ET).** Runs after `enrichAll` so new enrichments mirror to HubSpot before scoring and drafting.
+- **`draftFollowups` implemented (7:00 AM ET).** Batch `draftNudge` for 10+ day silence leads; defers to `runSequences` when an auto touch is due.
 
 **Changes from v1.1:**
 
@@ -347,7 +348,7 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 
 Prep briefs are **generated on demand** via `GET /prep-brief/:dealId` — no cron needed. Sonia hits it 5 minutes before each call.
 
-**Railway deployment:** One always-on web service plus one cron service on `*/5 * * * *` UTC running `cronTick.ts`, which dispatches PRD jobs by Eastern time. See `RAILWAY.md`. Jobs without scripts yet (`draftFollowups`, `dropVoicemails`) stay disabled in `src/shared/cronSchedule.ts`.
+**Railway deployment:** One always-on web service plus one cron service on `*/5 * * * *` UTC running `cronTick.ts`, which dispatches PRD jobs by Eastern time. See `RAILWAY.md`. `draftFollowups` (7:00 AM ET) batch-drafts approval-gated `kind='nudge'` emails for leads in the awaiting-reply state (same rules as `/queue` §9.5); `runSequences` (7:30 AM) auto-sends template touches 2–5. `dropVoicemails` stays disabled until implemented.
 
 ### 9.2 Lead Sourcing (pipeline)
 

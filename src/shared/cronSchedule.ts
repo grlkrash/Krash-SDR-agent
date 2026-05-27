@@ -23,7 +23,7 @@ export const CRON_JOBS: CronJobDef[] = [
   { name: 'syncToHubspot', kind: 'daily', etHour: 5, etMinute: 45, modulePath: './syncToHubspot.js', enabled: true },
   { name: 'scorePipeline', kind: 'daily', etHour: 6, etMinute: 0, modulePath: './scorePipeline.js', enabled: true },
   { name: 'draftColdBatch', kind: 'daily', etHour: 6, etMinute: 30, modulePath: './draftColdBatch.js', enabled: true },
-  { name: 'draftFollowups', kind: 'daily', etHour: 7, etMinute: 0, modulePath: './draftFollowups.js', enabled: false },
+  { name: 'draftFollowups', kind: 'daily', etHour: 7, etMinute: 0, modulePath: './draftFollowups.js', enabled: true },
   { name: 'runSequences', kind: 'daily', etHour: 7, etMinute: 30, modulePath: './runSequences.js', enabled: true },
   { name: 'draftUpsellBatch', kind: 'daily', etHour: 8, etMinute: 0, modulePath: './draftUpsellBatch.js', enabled: true },
   { name: 'quarterlyCheckins', kind: 'daily', etHour: 9, etMinute: 0, modulePath: './quarterlyCheckins.js', enabled: true },

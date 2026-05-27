@@ -50,12 +50,12 @@ const audit = (
 ): Promise<unknown> =>
   prisma.auditLog.create({ data: { action, entity: 'Draft', entityId: draftId, meta } });
 
-type SequenceState =
+export type SequenceState =
   | { status: 'replied' }
   | { status: 'completed' }
   | { status: 'active'; nextStep: number; nextSendAt: Date; coldDraft: Draft };
 
-const getSequenceState = async (leadId: string): Promise<SequenceState | null> => {
+export const getSequenceState = async (leadId: string): Promise<SequenceState | null> => {
   const drafts = await prisma.draft.findMany({
     where: {
       leadId,

@@ -158,7 +158,7 @@ PRD §16 budgets **~$12/mo** for Railway web + Postgres + cron tick (Hobby + sma
 
 These stay `enabled: false` in `src/shared/cronSchedule.ts` until their scripts land:
 
-- `draftFollowups`
+- ~~`draftFollowups`~~ (enabled — 7:00 AM ET nudge batch)
 - `dropVoicemails`
 
 `refreshGoogleSignals` runs Mondays 4:00 AM ET via `refreshIntentSignals`.

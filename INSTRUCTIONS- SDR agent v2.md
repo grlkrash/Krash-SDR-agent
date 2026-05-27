@@ -1086,6 +1086,27 @@ STOP.
 
 ---
 
+### Prompt 6.7 — draftFollowups cron (PRD §9.1 7:00 AM ET)
+
+```
+Create ONLY src/shared/awaitingReply.ts, src/scripts/draftFollowups.ts.
+Edit src/shared/cronSchedule.ts (draftFollowups enabled: true), src/outreach/sequencer.ts (export getSequenceState), src/ui/queue.ts (reuse awaitingReplyLeadWhere).
+
+src/shared/awaitingReply.ts:
+Export REPLY_SILENCE_DAYS=10, MS_PER_DAY, awaitingReplySilenceCutoff(), awaitingReplyLeadWhere(silenceCutoff) — same Prisma where as Prompt 6.6 awaiting-reply section.
+
+src/scripts/draftFollowups.ts:
+Cron batch: find awaiting-reply leads (overfetch 4× batch), sort oldest silence first, cap 15 per run.
+Skip if getSequenceState is 'replied', or 'active' with nextSendAt <= now (runSequences owns that).
+Call draftNudge(leadId) with concurrency 3. Audit cron.success entity draftFollowups.
+
+Enable in cronSchedule at 7:00 AM ET (before runSequences 7:30).
+```
+
+**Acceptance:** Lead with sent cold draft 11+ days ago, no pending drafts → run script → pending `kind='nudge'` appears in `/queue`. Lead due for auto followup-2 today is skipped (sequencer handles).
+
+---
+
 ## Phase 7 — Pipeline Scoring & Daily Brief
 
 ### Prompt 7.1 — Score open deals
@@ -1730,7 +1751,7 @@ RAILWAY.md must document the full post-deploy checklist:
 8. One-time local: tsx src/scripts/setupHubspotCustomProperties.ts and npm run kb:reindex
 9. Verify AuditLog has cron.success rows from cronTick; manual test: CRON_JOB=checkCostCaps tsx src/scripts/runCron.ts
 
-Note: Jobs without scripts stay enabled: false in src/shared/cronSchedule.ts (draftFollowups, dropVoicemails).
+Note: Jobs without scripts stay enabled: false in src/shared/cronSchedule.ts (dropVoicemails only). `draftFollowups` batches `draftNudge` for awaiting-reply leads (shared query in `src/shared/awaitingReply.ts`).
 
 STOP.
 ```

@@ -6,6 +6,11 @@ import { queueAuth } from '../middleware/queueAuth.js';
 import { draftNudge } from '../outreach/draftNudge.js';
 import { killLead } from '../outreach/killLead.js';
 import { logSentEmailToHubspot } from '../outreach/logSentEmail.js';
+import {
+  REPLY_SILENCE_DAYS,
+  awaitingReplyLeadWhere,
+  awaitingReplySilenceCutoff,
+} from '../shared/awaitingReply.js';
 
 const PAGE_SIZE = 30;
 // We fetch a window larger than the page so sort=value can rank the full
@@ -21,11 +26,7 @@ const DAY_MS = 86_400_000;
 // with a "Re-draft fresh" button that rejects the stale draft so
 // draftColdBatch picks the lead up cleanly on the next cron tick.
 const STALE_PAUSE_DAYS = 14;
-// A sent draft with no pending/approved/paused successor and no reply for
-// this many days is surfaced in the awaiting-reply section so Sonia can
-// fire a nudge with one click. Threshold chosen to give the prospect a
-// realistic window before we re-engage.
-const REPLY_SILENCE_DAYS = 10;
+// REPLY_SILENCE_DAYS lives in shared/awaitingReply.ts (also used by draftFollowups cron).
 
 const COMMISSION = { claimed: 60, select: 240, premium: 960 } as const;
 type Tier = keyof typeof COMMISSION;
@@ -616,8 +617,8 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
   // approved / paused) AND no recent nudge inside the same window. Once
   // Sonia clicks Nudge, a new pending draft lands in the window-excluding
   // set so the lead drops out of this section.
-  const tenDaysAgoMs = Date.now() - REPLY_SILENCE_DAYS * DAY_MS;
-  const tenDaysAgo = new Date(tenDaysAgoMs);
+  const silenceCutoff = awaitingReplySilenceCutoff();
+  const awaitingWhere = awaitingReplyLeadWhere(silenceCutoff);
   // Four section fetches + three counts so each section is paged independently
   // and one status can't crowd out another under FETCH_CAP. Approved +
   // paused/rejected are always newest-first; the value-sort dropdown only
@@ -652,19 +653,7 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
       include: { lead: { include: { enrichment: true } } },
     }),
     prisma.lead.findMany({
-      where: {
-        doNotContact: false,
-        drafts: {
-          some: { status: 'sent' },
-          none: {
-            OR: [
-              { status: { in: ['pending', 'approved', 'paused'] } },
-              { status: 'sent', sentAt: { gt: tenDaysAgo } },
-              { kind: 'nudge', createdAt: { gt: tenDaysAgo } },
-            ],
-          },
-        },
-      },
+      where: awaitingWhere,
       include: {
         enrichment: true,
         drafts: {
@@ -679,21 +668,7 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
     prisma.draft.count({ where: { status: 'pending' } }),
     prisma.draft.count({ where: { status: 'approved' } }),
     prisma.draft.count({ where: { status: { in: ['paused', 'rejected'] } } }),
-    prisma.lead.count({
-      where: {
-        doNotContact: false,
-        drafts: {
-          some: { status: 'sent' },
-          none: {
-            OR: [
-              { status: { in: ['pending', 'approved', 'paused'] } },
-              { status: 'sent', sentAt: { gt: tenDaysAgo } },
-              { kind: 'nudge', createdAt: { gt: tenDaysAgo } },
-            ],
-          },
-        },
-      },
-    }),
+    prisma.lead.count({ where: awaitingWhere }),
   ]);
   const orderedPending =
     sortMode === 'value'
