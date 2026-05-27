@@ -572,6 +572,7 @@ const renderPage = (
   <h1>Approval Queue</h1>
   <div class="top-meta">${totalPending} pending · ${totalApproved} approved &amp; ready to send${awaitingReplyMeta}${undoMeta}</div>
   <div class="toolbar">
+    <a href="/copilot" style="font-size:14px;margin-right:12px;">Sales co-pilot →</a>
     <form method="get" action="/queue">
       <label for="sort">Sort pending:</label>
       <select id="sort" name="sort" onchange="this.form.submit()">
