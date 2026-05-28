@@ -2,11 +2,11 @@
 //
 // Cron entry: send every approved-but-not-yet-sent draft. Routing happens
 // in sendApprovedDraft (sender.ts): email kinds (cold/followup-N/replied
-// /quarterly/renewal/upsell/reactivation/nudge) ship via Gmail; the
-// voicemail kind ships via Twilio. The 200ms pacing keeps us under
-// Gmail's per-second send quota and gives HubSpot's engagement-create
-// rate limit headroom too; voicemail Twilio calls inherit the same pace,
-// which is plenty for the lookups/calls APIs.
+// /quarterly/renewal/upsell/reactivation/nudge) ship via Gmail; voicemail
+// kinds (voicemail, voicemail-2) ship via Twilio. The 200ms pacing keeps
+// us under Gmail's per-second send quota and gives HubSpot's
+// engagement-create rate limit headroom too; voicemail Twilio calls
+// inherit the same pace, which is plenty for the lookups/calls APIs.
 
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';

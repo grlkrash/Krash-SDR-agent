@@ -18,12 +18,19 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { hs, hsRetry } from '../shared/hubspot.js';
+import { sendEmail } from '../shared/gmail.js';
+import {
+  buildPrepBriefEmail,
+  buildWhisperText,
+} from '../shared/prepBriefForCall.js';
 
 const CONNECTED = 'connected';
 const NO_ANSWER = 'no-answer';
 const HUBSPOT_CALL_DIRECTION = 'OUTBOUND';
 const MACHINE_END_BEEP = 'machine_end_beep';
 const CALL_STATUS_COMPLETED = 'completed';
+const BRIDGE_TIMEOUT_SECONDS = 20;
+const VOICEMAIL_2_KIND = 'voicemail-2';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -57,8 +64,18 @@ const parseDraftId = (raw: unknown): string | null => {
 const TwilioBody = z.record(z.string(), z.string());
 type TwilioBodyShape = z.infer<typeof TwilioBody>;
 
+const computeDisposition = (kind: string, answeredBy: string): string => {
+  if (answeredBy === MACHINE_END_BEEP) return CONNECTED;
+  // Voicemail-2 + human answer = bridge attempted. The bridge's actual
+  // outcome (Sonia picked up vs missed) lives in the dial-result audit;
+  // HubSpot just sees "we connected with a human."
+  if (kind === VOICEMAIL_2_KIND && answeredBy === 'human') return CONNECTED;
+  return NO_ANSWER;
+};
+
 const logHubspotCallEngagement = async (opts: {
   draftId: string;
+  kind: string;
   companyId: string | null;
   callStatus: string;
   answeredBy: string;
@@ -71,8 +88,7 @@ const logHubspotCallEngagement = async (opts: {
       });
       return;
     }
-    const disposition =
-      opts.answeredBy === MACHINE_END_BEEP ? CONNECTED : NO_ANSWER;
+    const disposition = computeDisposition(opts.kind, opts.answeredBy);
     const created = await hsRetry(() =>
       hs.crm.objects.calls.basicApi.create({
         properties: {
@@ -117,6 +133,22 @@ const parseTwilioBody = (body: unknown): TwilioBodyShape => {
   return result.success ? result.data : {};
 };
 
+const sendPrepBriefIfPossible = async (
+  draftId: string,
+  recipient: string,
+  emailBody: { subject: string; body: string },
+): Promise<void> => {
+  try {
+    await sendEmail({ to: recipient, subject: emailBody.subject, body: emailBody.body });
+    await audit('voicemail2.prep-brief-sent', draftId, { recipient });
+  } catch (err) {
+    await audit('voicemail2.prep-brief-failed', draftId, {
+      recipient,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+};
+
 twilioRouter.post('/webhook/twilio/twiml', async (req, res) => {
   const draftId = parseDraftId(req.query.draftId);
   if (draftId === null) {
@@ -127,19 +159,108 @@ twilioRouter.post('/webhook/twilio/twiml', async (req, res) => {
     return;
   }
   const body = parseTwilioBody(req.body);
-  const draft = await prisma.draft.findUnique({ where: { id: draftId }, select: { id: true } });
+  const draft = await prisma.draft.findUnique({
+    where: { id: draftId },
+    select: {
+      id: true,
+      kind: true,
+      lead: { include: { enrichment: true } },
+    },
+  });
   if (draft === null) {
     res.type('text/xml').send('<Response><Hangup/></Response>');
     return;
   }
   const answeredBy = body.AnsweredBy ?? '';
-  if (!answeredBy.startsWith('machine')) {
+  const publicUrl = process.env.PUBLIC_URL ?? '';
+
+  // Machine answered → drop the pre-rendered MP3 (same path for vm-1 and vm-2).
+  if (answeredBy.startsWith('machine')) {
+    const audioUrl = `${publicUrl}/audio/${escapeXml(draftId)}`;
+    res.type('text/xml').send(`<Response><Play>${audioUrl}</Play></Response>`);
+    return;
+  }
+
+  // Human answered. For voicemail-1 the spec is to hang up (we only run on
+  // landlines and the prospect picking up a business line is unexpected).
+  if (draft.kind !== VOICEMAIL_2_KIND) {
     res.type('text/xml').send('<Response><Hangup/></Response>');
     return;
   }
-  const publicUrl = process.env.PUBLIC_URL ?? '';
-  const audioUrl = `${publicUrl}/audio/${escapeXml(draftId)}`;
-  res.type('text/xml').send(`<Response><Play>${audioUrl}</Play></Response>`);
+
+  // Voicemail-2 + human pickup = the bridge case. Email Sonia the prep
+  // brief synchronously (Gmail send ~600ms, well under Twilio's 5s soft
+  // timeout), then return TwiML that dials Sonia with a whisper.
+  const sonia = process.env.SONIA_PHONE ?? '';
+  const recipient = process.env.BRIEF_RECIPIENT ?? '';
+  if (sonia === '') {
+    await audit('voicemail2.bridge-no-sonia-phone', draftId, {});
+    res.type('text/xml').send('<Response><Hangup/></Response>');
+    return;
+  }
+  if (recipient !== '') {
+    const emailBody = buildPrepBriefEmail(draft.lead, draft.lead.enrichment);
+    await sendPrepBriefIfPossible(draftId, recipient, emailBody);
+  }
+
+  const whisperUrl = `${publicUrl}/webhook/twilio/whisper?draftId=${escapeXml(draftId)}`;
+  const dialResultUrl = `${publicUrl}/webhook/twilio/dial-result?draftId=${escapeXml(draftId)}`;
+  const twiml = `<Response><Dial timeout="${BRIDGE_TIMEOUT_SECONDS}" answerOnBridge="true" action="${dialResultUrl}"><Number url="${whisperUrl}">${escapeXml(sonia)}</Number></Dial></Response>`;
+
+  await audit('voicemail2.bridge-initiated', draftId, {
+    sonia,
+    recipient,
+  });
+  res.type('text/xml').send(twiml);
+});
+
+// Played in SONIA's ear before the bridge connects. Twilio's built-in
+// <Say> voice (free, ~instant) — not ElevenLabs — since this is for
+// Sonia's ear only and we need zero added latency.
+twilioRouter.post('/webhook/twilio/whisper', async (req, res) => {
+  const draftId = parseDraftId(req.query.draftId);
+  if (draftId === null) {
+    res.type('text/xml').send('<Response></Response>');
+    return;
+  }
+  const draft = await prisma.draft.findUnique({
+    where: { id: draftId },
+    select: { lead: { include: { enrichment: true } } },
+  });
+  if (draft === null) {
+    res.type('text/xml').send('<Response></Response>');
+    return;
+  }
+  const text = buildWhisperText(draft.lead, draft.lead.enrichment);
+  await audit('voicemail2.whisper-served', draftId, { whisperText: text });
+  res.type('text/xml').send(`<Response><Say>${escapeXml(text)}</Say></Response>`);
+});
+
+// Action URL on the <Dial>. Fires after the dial leg ends (whether Sonia
+// connected, didn't answer, or the bridge completed). If Sonia connected
+// successfully (DialCallStatus='completed'), the prospect has already had
+// the conversation — just hang up. Otherwise play a brief apology so the
+// prospect doesn't sit in dead air.
+twilioRouter.post('/webhook/twilio/dial-result', async (req, res) => {
+  const draftId = parseDraftId(req.query.draftId);
+  const body = parseTwilioBody(req.body);
+  const dialCallStatus = body.DialCallStatus ?? '';
+
+  if (draftId !== null) {
+    await audit('voicemail2.dial-result', draftId, body);
+  }
+
+  if (dialCallStatus === CALL_STATUS_COMPLETED) {
+    res.type('text/xml').send('<Response><Hangup/></Response>');
+    return;
+  }
+
+  // Missed bridge — Sonia didn't pick up, was busy, or call failed.
+  // Apologize and hang up. (We never drop voicemail audio at a LIVE human
+  // who just heard ringing — that'd be jarring.)
+  res.type('text/xml').send(
+    '<Response><Say>Sorry, I just missed you. I will try you back. Thank you.</Say><Hangup/></Response>',
+  );
 });
 
 twilioRouter.post('/webhook/twilio/status', async (req, res) => {
@@ -169,11 +290,15 @@ twilioRouter.post('/webhook/twilio/status', async (req, res) => {
 
   const draft = await prisma.draft.findUnique({
     where: { id: draftId },
-    include: { lead: { select: { hubspotCompanyId: true } } },
+    select: {
+      kind: true,
+      lead: { select: { hubspotCompanyId: true } },
+    },
   });
   if (draft !== null) {
     await logHubspotCallEngagement({
       draftId,
+      kind: draft.kind,
       companyId: draft.lead.hubspotCompanyId,
       callStatus,
       answeredBy,

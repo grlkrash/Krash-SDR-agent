@@ -207,7 +207,7 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
   });
   if (draft === null) return;
   if (draft.status !== 'approved') return;
-  if (draft.kind === 'voicemail') {
+  if (draft.kind === 'voicemail' || draft.kind === 'voicemail-2') {
     const { lead: voicemailLead, ...voicemailDraft } = draft;
     await dropVoicemailViaTwilio(voicemailDraft, voicemailLead);
     return;
