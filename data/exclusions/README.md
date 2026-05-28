@@ -12,14 +12,16 @@ Drop spreadsheets here so cold outreach skips facilities already on Sobriety Sel
 
 **Do not commit real CSVs** — they may contain PII. Only `.gitkeep` files are tracked.
 
-## Automatic directory scrape (daily cron)
+## Automatic directory sync (daily cron)
 
 Every day at **6:15 AM ET** (before `draftColdBatch`), `syncDirectoryExclusions`:
 
-1. Renders [sobrietyselect.com/centers](https://sobrietyselect.com/centers) with Playwright
-2. Matches facilities to your `Lead` rows
-3. Flags matches as `directory-listed` (cold excluded, not `doNotContact`)
-4. Logs `hubspotCrossoverCount` — HubSpot-synced leads that also appear on the public directory
+1. Calls Sobriety Select's public search API (`/api/medical-centers/search`)
+2. Pulls all **verified partner listings** (`subscriptionType` = `subscribe` or `ads`) — currently ~80–90 nationwide
+3. Matches to your `Lead` rows and flags them `directory-listed` (cold excluded, not `doNotContact`)
+4. Logs `catalogTotalEstimate` (~9,700) — the searchable inventory shown when you filter by insurance/region; **those are not SS clients**
+
+**Important:** Filtering Midwest + Anthem shows **400+ results** because that's the full searchable catalog, not verified Sobriety Select listings. Only `subscribe`/`ads` rows get the verified badge and cold exclusion.
 
 Manual run:
 

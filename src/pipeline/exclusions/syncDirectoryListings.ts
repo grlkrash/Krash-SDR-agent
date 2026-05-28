@@ -5,13 +5,17 @@ import { applyExclusionToLead } from './applyExclusion.js';
 import { buildLeadIndex, matchRowToLead } from './matchLead.js';
 import type { ExclusionImportRow } from './normalizeRow.js';
 import { parseScrapedLabel } from './parseScrapedLabel.js';
+import { fetchDirectoryCatalogStats } from './fetchDirectoryApi.js';
 import { scrapeDirectoryCenters } from './scrapeDirectory.js';
 
-const SOURCE_FILE = 'sobrietyselect.com/centers-scrape';
+const SOURCE_FILE = 'sobrietyselect.com/directory-api';
 const SOURCE_TAG = 'directory-scrape-auto';
 
 export type SyncDirectoryResult = {
   scrapedCenters: number;
+  verifiedSubscribe: number;
+  verifiedAds: number;
+  catalogTotalEstimate: number;
   matched: number;
   applied: number;
   ambiguous: number;
@@ -33,6 +37,7 @@ export const syncDirectoryListings = async (
   prisma: PrismaClient,
 ): Promise<SyncDirectoryResult> => {
   const scraped = await scrapeDirectoryCenters();
+  const catalogStats = await fetchDirectoryCatalogStats();
 
   const leads = await prisma.lead.findMany({
     select: {
@@ -50,6 +55,9 @@ export const syncDirectoryListings = async (
 
   const result: SyncDirectoryResult = {
     scrapedCenters: scraped.length,
+    verifiedSubscribe: scraped.filter((c) => c.subscriptionType === 'subscribe').length,
+    verifiedAds: scraped.filter((c) => c.subscriptionType === 'ads').length,
+    catalogTotalEstimate: catalogStats.catalogTotalEstimate,
     matched: 0,
     applied: 0,
     ambiguous: 0,
@@ -64,11 +72,13 @@ export const syncDirectoryListings = async (
   const matchedLeadIds = new Set<string>();
 
   for (const center of scraped) {
-    const cleaned = parseScrapedLabel(center.rawLabel);
+    const cleaned = center.name !== ''
+      ? { name: center.name, city: center.city, state: center.state }
+      : parseScrapedLabel(center.rawLabel);
     const row: ExclusionImportRow = {
       externalId: center.slug,
       name: cleaned.name,
-      street: null,
+      street: center.address,
       city: cleaned.city,
       state: cleaned.state,
       zip: null,
@@ -76,7 +86,7 @@ export const syncDirectoryListings = async (
       domain: null,
       email: null,
       phone: null,
-      tier: null,
+      tier: center.subscriptionType,
       status: 'active',
     };
 
