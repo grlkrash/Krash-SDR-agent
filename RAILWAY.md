@@ -87,12 +87,37 @@ On **both** `ssa-web` and `ssa-cron` → **Variables** → add:
 
 Use the variable picker: select your **Postgres** service → `DATABASE_URL`. If the database service has a different name (e.g. `ssa-db`), use `${{ssa-db.DATABASE_URL}}` instead.
 
-Project-level **Shared Variables** work too — attach them to both services.
+### Private vs public Postgres URL — pick the private one
+
+Railway's Postgres plugin exposes two connection strings. **Always reference `DATABASE_URL`, never `DATABASE_PUBLIC_URL`** from Railway-hosted services:
+
+| Variable on Postgres | Hostname | Use from Railway | Egress fees |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | `postgres.railway.internal` (IPv6) | ✅ ssa-web, ssa-cron | free |
+| `DATABASE_PUBLIC_URL` | `*.proxy.rlwy.net` (TCP proxy) | ❌ never from Railway | yes |
+
+If you see Railway warn _"DATABASE_PUBLIC_URL references a public endpoint…"_, you picked the wrong one from the variable picker — change it to `${{Postgres.DATABASE_URL}}` and redeploy.
+
+`DATABASE_PUBLIC_URL` is only useful from **outside** Railway (your laptop, CI). Local `.env` can use it, or just use `railway connect postgres` / `railway run`.
+
+### Service-to-service references
+
+Three lines in the Railway canvas, all for variable references (not network calls):
+
+| From | To | Variable | Why |
+| --- | --- | --- | --- |
+| `ssa-web` | `Postgres` | `DATABASE_URL = ${{Postgres.DATABASE_URL}}` | Prisma reads |
+| `ssa-cron` | `Postgres` | `DATABASE_URL = ${{Postgres.DATABASE_URL}}` | Prisma reads |
+| `ssa-cron` | `ssa-web` | `PUBLIC_URL = https://${{ssa-web.RAILWAY_PUBLIC_DOMAIN}}` | unsubscribe links + daily brief |
+
+`ssa-web` does **not** reference `ssa-cron` — web never reads from cron. The Postgres service has no references out; it only receives.
+
+Project-level **Shared Variables** work too — attach them to `ssa-web` and `ssa-cron` only. **Do not attach shared vars to the Postgres service** — it ignores app secrets.
 
 Other secrets (copy from `.env.example`):
 
 ```
-DATABASE_URL          ← ${{Postgres.DATABASE_URL}}  (REQUIRED)
+DATABASE_URL          ← ${{Postgres.DATABASE_URL}}                    (REQUIRED, private — see above)
 ANTHROPIC_API_KEY=
 VOYAGE_API_KEY=
 GOOGLE_MAPS_API_KEY=
@@ -110,7 +135,7 @@ TWILIO_FROM_NUMBER=
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=
 QUEUE_PASSWORD=
-PUBLIC_URL            ← https://your-web-service.up.railway.app
+PUBLIC_URL            ← https://${{ssa-web.RAILWAY_PUBLIC_DOMAIN}}    (set on ssa-cron; ssa-web can hardcode or omit)
 UNSUBSCRIBE_SECRET=
 BRIEF_RECIPIENT=      ← your email for daily brief + cost cap alerts
 SONIA_PHONE=
