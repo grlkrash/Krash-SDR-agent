@@ -13,6 +13,7 @@
     "kb:reindex": "tsx src/scripts/reindexKB.ts",
     "exclusions:import": "tsx src/scripts/importExclusions.ts",
     "exclusions:sync-directory": "tsx src/scripts/syncDirectoryExclusions.ts",
+    "leads:export": "tsx src/scripts/exportLeads.ts",
     "migrate": "prisma migrate dev",
     "test": "vitest run",
     "test:watch": "vitest",

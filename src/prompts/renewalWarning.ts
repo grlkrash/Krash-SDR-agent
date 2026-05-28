@@ -12,20 +12,21 @@
 //     zero fill-ins, or use an unambiguously-bracketed [OPTIONAL: ...] note
 //     Sonia can paste a real win into.
 //
-// `tier` and `tierPrice` remain in buildRenewalUser's signature for caller-
-// site stability and AuditLog observability (outreach/renewalWarning still
-// writes tierPrice into the drafted audit row), but they are NOT rendered
-// into the user prompt — the model must never see the price.
+// Contract term (v1.3): ss_contract_term_months drives partnership phrasing
+// so 3- and 6-month clients are not told "the year ahead."
 
 import type { Enrichment, Lead } from '@prisma/client';
+import type { ContractTermMonths } from '../shared/dealRenewal.js';
+import { contractTermPartnershipLabel } from '../shared/dealRenewal.js';
 
-export const RENEWAL_WARNING_SYSTEM = `Write a 60-day pre-renewal email to a Sobriety Select client. Tone: confident, not anxious — a partner confirming the next year together, not a salesperson worried about losing them.
+export const RENEWAL_WARNING_SYSTEM = `Write a 60-day pre-renewal email to a Sobriety Select client. Tone: confident, not anxious — a partner confirming the next contract period together, not a salesperson worried about losing them.
 
 The email MUST:
 - Reference the renewal_date from user context as a calendar anchor.
+- Match partnership length to contract_term_months when provided (use partnership_length_label). Do NOT say "year" or "twelve-month" unless contract_term_months is 12 or partnership_length_label says twelve-month.
 - Warmly reference the ongoing partnership and the specific facility name + city.
 - Express genuine interest in continuing.
-- End with two specific call times for them to choose between to confirm and discuss the year ahead.
+- End with two specific call times for them to choose between to confirm and discuss the period ahead.
 
 The email MUST NOT:
 - Mention price, dollar figures, or any cost. Price comes up on the call, attached to results.
@@ -63,6 +64,7 @@ export const buildRenewalUser = (
   lead: LeadFacts,
   enrichment: EnrichmentFacts,
   renewalDate: Date,
+  contractTermMonths: ContractTermMonths | null,
   _tier: string,
   _tierPrice: number,
 ): string => {
@@ -73,6 +75,12 @@ export const buildRenewalUser = (
     `deal_name: ${deal.name}`,
     `renewal_date: ${formatRenewalDate(renewalDate)}`,
   ];
+  if (contractTermMonths !== null) {
+    lines.push(`contract_term_months: ${String(contractTermMonths)}`);
+    lines.push(
+      `partnership_length_label: ${contractTermPartnershipLabel(contractTermMonths)}`,
+    );
+  }
   if (lead.services.length > 0) {
     lines.push(`services: ${lead.services.join(', ')}`);
   }

@@ -620,7 +620,8 @@ Contact custom properties:
 - ss_linkedin_url (string, single-line)
 
 Deal custom properties:
-- ss_renewal_date (date)
+- ss_contract_term_months (enumeration: 3, 6, 12 — contract length in months; set at close)
+- ss_renewal_date (date — auto-synced from closedate + ss_contract_term_months when both are set)
 - ss_product_type (enumeration: claimed, select, premium, seo, social, ppc, upsell-bundle)
 
 Use hs.crm.properties API: hs.crm.properties.coreApi.getByName(objectType, name) for the GET check, hs.crm.properties.coreApi.create(objectType, propertyCreate) for the POST.
@@ -1449,6 +1450,54 @@ STOP.
 ```
 
 **Acceptance:** Stage deal with ss_renewal_date 60 days out → run → draft appears with tier-appropriate language and exact price.
+
+---
+
+### Prompt 9.2.2 — Contract term + auto renewal date (v1.3)
+
+```
+Create ONLY:
+- src/shared/dealRenewal.ts
+- src/pipeline/syncDealRenewalDates.ts
+- src/scripts/syncDealRenewalDates.ts
+- tests/shared/dealRenewal.test.ts
+
+AND edit ONLY:
+- src/scripts/setupHubspotCustomProperties.ts (add ss_contract_term_months enum 3|6|12 on deals)
+- src/shared/cronSchedule.ts (daily 9:45 AM ET syncDealRenewalDates, before renewalWarnings)
+- src/prompts/renewalWarning.ts (term-aware partnership language; buildRenewalUser gains contractTermMonths arg)
+- src/outreach/renewalWarning.ts (fetch ss_contract_term_months; pass to buildRenewalUser; audit contractTermMonths)
+
+src/shared/dealRenewal.ts:
+Export CONTRACT_TERM_MONTHS, ContractTermMonths, parseContractTermMonths, parseHsDate, formatHsDateOnly, computeRenewalDate(closeDate, termMonths) via UTC calendar math, hsDateOnlyEqual, contractTermPartnershipLabel.
+
+src/pipeline/syncDealRenewalDates.ts:
+Export syncDealRenewalDates(). Paginate HubSpot closedwon deals. When ss_contract_term_months AND closedate are set, set ss_renewal_date = closedate + term (skip if already matches). Audit syncDealRenewalDates.updated|skip-no-closedate|failure|run. hsRetry + 100ms pacing.
+
+src/scripts/syncDealRenewalDates.ts:
+Cron wrapper with cron.success/failure entity syncDealRenewalDates.
+
+renewalWarning prompt: use contract_term_months / partnership_length_label — do NOT say "year" unless term is 12.
+
+Operator rule (document in acceptance): on each renewal, update HubSpot Close Date to the new contract start so the next ss_renewal_date recomputes.
+
+STOP.
+```
+
+**Acceptance:**
+1. `npx tsx src/scripts/setupHubspotCustomProperties.ts` → creates `ss_contract_term_months`.
+2. Closed-won deal with `closedate=2025-06-01`, `ss_contract_term_months=12` → `npx tsx src/scripts/syncDealRenewalDates.ts` → `ss_renewal_date=2026-06-01`.
+3. Set that renewal date 60d out (or adjust close/term) → `renewalWarnings` draft uses six-month / three-month / twelve-month language per term, not always "year ahead".
+
+**HubSpot workflow (recommended):** Step-by-step UI setup in `data/hubspot/RENEWAL_WORKFLOW.md` — enroll Closed Won deals and set `SS Contract Term (months)` (default 12). For same-day `ss_renewal_date` before the 9:45 AM cron, run `npx tsx src/scripts/syncDealRenewalDates.ts`.
+
+**One-time backfill (existing closed-won):**
+
+```bash
+npx tsx src/scripts/backfillContractTerms.ts              # dry-run counts
+CONFIRM=yes npx tsx src/scripts/backfillContractTerms.ts  # default term 12 where missing
+npx tsx src/scripts/syncDealRenewalDates.ts
+```
 
 ---
 

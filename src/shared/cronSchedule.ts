@@ -35,6 +35,14 @@ export const CRON_JOBS: CronJobDef[] = [
   { name: 'runSequences', kind: 'daily', etHour: 7, etMinute: 30, modulePath: './runSequences.js', enabled: true },
   { name: 'draftUpsellBatch', kind: 'daily', etHour: 8, etMinute: 0, modulePath: './draftUpsellBatch.js', enabled: true },
   { name: 'quarterlyCheckins', kind: 'daily', etHour: 9, etMinute: 0, modulePath: './quarterlyCheckins.js', enabled: true },
+  {
+    name: 'syncDealRenewalDates',
+    kind: 'daily',
+    etHour: 9,
+    etMinute: 45,
+    modulePath: './syncDealRenewalDates.js',
+    enabled: true,
+  },
   { name: 'renewalWarnings', kind: 'daily', etHour: 10, etMinute: 0, modulePath: './renewalWarnings.js', enabled: true },
   { name: 'dropVoicemails', kind: 'daily', etHour: 14, etMinute: 0, modulePath: './dropVoicemails.js', enabled: false },
   // Every Railway cron tick (*/5 UTC): isDueNow uses minute % 5 < 5; shouldSkip

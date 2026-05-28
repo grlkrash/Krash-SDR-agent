@@ -8,3 +8,5 @@ test-results
 data/exclusions/incoming/**/*.csv
 data/exclusions/processed/*
 !data/exclusions/processed/.gitkeep
+data/exports/*.csv
+!data/exports/.gitkeep

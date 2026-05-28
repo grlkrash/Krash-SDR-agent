@@ -25,6 +25,10 @@ import { z } from 'zod';
 import { claude, extractJSON } from '../shared/claude.js';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import {
+  parseContractTermMonths,
+  parseHsDate,
+} from '../shared/dealRenewal.js';
+import {
   RENEWAL_WARNING_SYSTEM,
   buildRenewalUser,
 } from '../prompts/renewalWarning.js';
@@ -53,6 +57,7 @@ const DEAL_PROPERTIES = [
   'dealname',
   'dealstage',
   'ss_renewal_date',
+  'ss_contract_term_months',
   'ss_product_type',
 ];
 const CLOSED_WON_STAGE = 'closedwon';
@@ -76,25 +81,13 @@ const audit = (
 ): Promise<unknown> =>
   prisma.auditLog.create({ data: { action, entity: 'deal', entityId, meta } });
 
-// HubSpot returns dates as ISO strings on most v3 endpoints; legacy/system
-// properties occasionally arrive as Unix-ms. Mirrors parseHsDate from
-// outreach/quarterlyCheckin and pipeline/scoring so callers never get a
-// sentinel-value land mine.
-const parseHsDate = (raw: string | null | undefined): Date | null => {
-  if (raw === null || raw === undefined || raw === '') return null;
-  const iso = Date.parse(raw);
-  if (!Number.isNaN(iso)) return new Date(iso);
-  const num = Number(raw);
-  if (!Number.isNaN(num) && num > 0) return new Date(num);
-  return null;
-};
-
 const isTier = (s: string | null | undefined): s is Tier =>
   s === 'claimed' || s === 'select' || s === 'premium';
 
 interface DealRow {
   id: string;
   renewalDate: string | null;
+  contractTermMonths: string | null;
   dealname: string | null;
   productType: string | null;
 }
@@ -124,6 +117,7 @@ const fetchRenewingDealsInWindow = async (
       rows.push({
         id: d.id,
         renewalDate: d.properties.ss_renewal_date ?? null,
+        contractTermMonths: d.properties.ss_contract_term_months ?? null,
         dealname: d.properties.dealname ?? null,
         productType: d.properties.ss_product_type ?? null,
       });
@@ -219,6 +213,7 @@ export const generateRenewalWarnings = async (): Promise<void> => {
       }
       const tier: Tier = tierCandidate;
       const tierPrice = TIER_PRICES[tier];
+      const contractTermMonths = parseContractTermMonths(deal.contractTermMonths);
 
       const userPrompt = buildRenewalUser(
         {
@@ -228,6 +223,7 @@ export const generateRenewalWarnings = async (): Promise<void> => {
         leadOnly,
         enrichment,
         renewalDate,
+        contractTermMonths,
         tier,
         tierPrice,
       );
@@ -257,6 +253,7 @@ export const generateRenewalWarnings = async (): Promise<void> => {
         draftId: draft.id,
         tier,
         tierPrice,
+        contractTermMonths,
         renewalDate: renewalDate.toISOString(),
       });
       drafted += 1;

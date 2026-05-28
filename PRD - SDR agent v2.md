@@ -3,7 +3,11 @@
 **Version:** 1.3
 **Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
-**Last Updated:** May 26, 2026
+**Last Updated:** May 28, 2026
+
+**Changes from v1.2 (May 28, 2026):**
+
+- **Contract term + auto renewal date.** HubSpot Deal property `ss_contract_term_months` (3, 6, or 12). Daily `syncDealRenewalDates` (9:45 AM ET) sets `ss_renewal_date = closedate + term` for every closed-won deal with both fields set. `renewalWarnings` (10:00 AM ET) reads the term so pre-renewal copy matches 3-/6-/12-month contracts. Operator: set term at close; on each renewal, bump **Close Date** to the new contract start.
 
 **Changes from v1.2:**
 
@@ -190,6 +194,7 @@ sobriety-select-sdr/
 │   │   ├── enrich.ts
 │   │   ├── signals.ts           # NEW: directory check, hiring, tech stack
 │   │   ├── hubspotSync.ts
+│   │   ├── syncDealRenewalDates.ts  # closedate + term → ss_renewal_date
 │   │   └── scoring.ts
 │   ├── outreach/                # Relationship domain
 │   │   ├── draftCold.ts
@@ -214,6 +219,7 @@ sobriety-select-sdr/
 │   │   ├── fetchSite.ts
 │   │   ├── businessDays.ts
 │   │   ├── guessEmail.ts
+│   │   ├── dealRenewal.ts           # contract term + renewal date math
 │   │   └── unsubscribeToken.ts
 │   ├── prompts/
 │   │   ├── coldEmail.ts
@@ -337,6 +343,7 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 |`30 7 * * *`  |7:30 AM  |`runSequences`        |outreach|
 |`0 8 * * *`   |8:00 AM  |`draftUpsellBatch`    |outreach|
 |`0 9 * * *`   |9:00 AM  |`quarterlyCheckins`   |outreach|
+|`45 9 * * *`  |9:45 AM  |`syncDealRenewalDates`|pipeline|
 |`0 10 * * *`  |10:00 AM |`renewalWarnings`     |outreach|
 |`0 14 * * *`  |2:00 PM  |`dropVoicemails`      |outreach|
 |`*/5 * * * *` |~5 min   |`checkReplies`        |outreach|
@@ -517,7 +524,7 @@ Required prompts:
 - `followUpTemplates.ts` — rule-based touches 2–5
 - `replied.ts` — replied-thread drafter
 - `quarterlyCheckin.ts` — 90/180/270-day touch (the `Q{N} listing analytics` soft offer resolves to the **current calendar quarter** 1-4, never customer tenure — see INSTRUCTIONS Prompt 9.1.1)
-- `renewalWarning.ts` — 60-day pre-renewal
+- `renewalWarning.ts` — 60-day pre-renewal (term-aware via `ss_contract_term_months`)
 - `reactivation.ts` — stale-deal drafter
 - `voicemailScript.ts` — 25-second VM script
 - `prepBrief.ts` — NEW — discovery call brief

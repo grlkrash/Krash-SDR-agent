@@ -146,9 +146,21 @@ const PROPERTIES: PropSpec[] = [
   {
     objectType: 'deals',
     groupName: GROUP_DEAL,
+    name: 'ss_contract_term_months',
+    label: 'SS Contract Term (months)',
+    description:
+      'Initial contract length in months (3, 6, or 12). With Close Date, drives auto-computed SS Renewal Date.',
+    type: PropertyCreateTypeEnum.Enumeration,
+    fieldType: PropertyCreateFieldTypeEnum.Select,
+    options: buildOptions(['3', '6', '12']),
+  },
+  {
+    objectType: 'deals',
+    groupName: GROUP_DEAL,
     name: 'ss_renewal_date',
     label: 'SS Renewal Date',
-    description: 'Contract renewal date for upsell tracking.',
+    description:
+      'Contract renewal date. Auto-synced from Close Date + SS Contract Term when both are set.',
     type: PropertyCreateTypeEnum.Date,
     fieldType: PropertyCreateFieldTypeEnum.Date,
   },
