@@ -6,6 +6,7 @@ import { queueRouter } from './ui/queue.js';
 import { prepBriefRouter } from './ui/prepBrief.js';
 import { copilotRouter } from './ui/copilot.js';
 import { unsubscribeRouter } from './routes/unsubscribe.js';
+import { twilioRouter } from './routes/twilioHooks.js';
 import { hs, hsRetry } from './shared/hubspot.js';
 import { claude } from './shared/claude.js';
 
@@ -115,6 +116,7 @@ app.use('/', queueRouter);
 app.use('/', prepBriefRouter);
 app.use('/', copilotRouter);
 app.use('/', unsubscribeRouter);
+app.use('/', twilioRouter);
 
 const port = Number(process.env.PORT) || DEFAULT_PORT;
 const host = '0.0.0.0';

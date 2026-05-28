@@ -44,7 +44,7 @@ export const CRON_JOBS: CronJobDef[] = [
     enabled: true,
   },
   { name: 'renewalWarnings', kind: 'daily', etHour: 10, etMinute: 0, modulePath: './renewalWarnings.js', enabled: true },
-  { name: 'dropVoicemails', kind: 'daily', etHour: 14, etMinute: 0, modulePath: './dropVoicemails.js', enabled: false },
+  { name: 'dropVoicemails', kind: 'daily', etHour: 14, etMinute: 0, modulePath: './dropVoicemails.js', enabled: true },
   // Every Railway cron tick (*/5 UTC): isDueNow uses minute % 5 < 5; shouldSkip
   // enforces ≥4.5 min between runs — ~5 min reply detection cadence.
   { name: 'checkReplies', kind: 'interval', intervalMinutes: 5, modulePath: './checkReplies.js', enabled: true },

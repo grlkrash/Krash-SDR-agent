@@ -48,6 +48,7 @@ const LOOKBACK_MS = 24 * MS_PER_HOUR;
 const HOT_LEADS_LIMIT = 5;
 const AT_RISK_LIMIT = 3;
 const CALL_LIST_LIMIT = 5;
+const MANUAL_VM_LIMIT = 10;
 // Pull a wider pool than the final 5 so we can filter on "lead has phone"
 // without undershooting when the very top-scoring deals lack a phoneE164 in
 // our DB (some deals come from HubSpot manual create, not the scrape path).
@@ -435,6 +436,60 @@ interface CallListRow {
   hint: string;
 }
 
+interface ManualVoicemailRow {
+  facility: string;
+  city: string;
+  state: string;
+  phone: string;
+  ownerName: string | null;
+  reason: string;
+  hint: string;
+}
+
+const buildManualVoicemailRows = async (
+  cutoff: Date,
+): Promise<ManualVoicemailRow[]> => {
+  const drafts = await prisma.draft.findMany({
+    where: {
+      kind: 'voicemail',
+      status: 'voicemail-skipped-state-law',
+      createdAt: { gte: cutoff },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: MANUAL_VM_LIMIT,
+    include: { lead: { include: { enrichment: true } } },
+  });
+  const out: ManualVoicemailRow[] = [];
+  for (const d of drafts) {
+    const lead = d.lead;
+    if (lead.phoneE164 === null) continue;
+    const reasonMatch = d.body.match(/skipped — ([^;]+);/);
+    const reason = reasonMatch === null ? 'state-law restricted' : reasonMatch[1] ?? 'state-law restricted';
+    out.push({
+      facility: lead.name,
+      city: lead.city,
+      state: lead.state,
+      phone: formatPhoneForDisplay(lead.phoneE164),
+      ownerName: lead.enrichment?.ownerName ?? null,
+      reason,
+      hint: callHint(lead.state),
+    });
+  }
+  return out;
+};
+
+const renderManualVoicemailRequired = (rows: ManualVoicemailRow[]): string => {
+  const header = '## 🚨 Manual VM required — state-law restricted (24h)';
+  if (rows.length === 0) {
+    return `${header}\n\n_None — no restricted-state leads flagged in the last 24h._`;
+  }
+  const items = rows.map((r, i) => {
+    const owner = r.ownerName ?? '—';
+    return `${i + 1}. **${r.facility}** (${r.city}, ${r.state}) — ${r.phone} · ${owner} · ${r.hint} · _${r.reason}_`;
+  }).join('\n');
+  return `${header}\n\n${items}`;
+};
+
 const renderCallList = (rows: CallListRow[]): string => {
   const header = '## 📞 Suggested call list (tomorrow)';
   if (rows.length === 0) {
@@ -543,6 +598,7 @@ export const sendDailyBrief = async (): Promise<void> => {
   const callList = buildCallList(callCandidates, enriched);
   const replyRows = await buildReplyRows(repliedDrafts, now);
   const hiringSpikeRows = await buildHiringSpikeRows(cutoff);
+  const manualVoicemailRows = await buildManualVoicemailRows(cutoff);
 
   const body = [
     `# 📊 Pipeline brief — ${date}`,
@@ -556,6 +612,8 @@ export const sendDailyBrief = async (): Promise<void> => {
     renderAtRisk(atRiskTop, enriched),
     '',
     renderCallList(callList),
+    '',
+    renderManualVoicemailRequired(manualVoicemailRows),
     '',
     `## 📥 Queue: ${pendingCount} pending`,
     `## 📈 Yesterday: sent ${sentCount} | replies ${repliesCount} | meetings ${meetingsCount}`,
@@ -581,6 +639,7 @@ export const sendDailyBrief = async (): Promise<void> => {
         hotCount: hotTop.length,
         atRiskCount: atRiskTop.length,
         callListCount: callList.length,
+        manualVoicemailCount: manualVoicemailRows.length,
         pendingCount,
         sentCount,
         repliesCount,

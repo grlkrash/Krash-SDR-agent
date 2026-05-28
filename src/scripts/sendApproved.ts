@@ -1,8 +1,12 @@
 // tsx src/scripts/sendApproved.ts
 //
-// Cron entry: send every approved-but-not-yet-sent cold/followup draft.
-// 200ms pacing between sends keeps us well under Gmail's per-second send
-// quota and gives HubSpot's engagement-create rate limit headroom too.
+// Cron entry: send every approved-but-not-yet-sent draft. Routing happens
+// in sendApprovedDraft (sender.ts): email kinds (cold/followup-N/replied
+// /quarterly/renewal/upsell/reactivation/nudge) ship via Gmail; the
+// voicemail kind ships via Twilio. The 200ms pacing keeps us under
+// Gmail's per-second send quota and gives HubSpot's engagement-create
+// rate limit headroom too; voicemail Twilio calls inherit the same pace,
+// which is plenty for the lookups/calls APIs.
 
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -34,7 +38,6 @@ const main = async (): Promise<void> => {
       where: {
         status: 'approved',
         sentAt: null,
-        kind: { not: 'voicemail' },
       },
       select: { id: true },
       orderBy: { createdAt: 'asc' },
