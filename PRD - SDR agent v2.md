@@ -1,9 +1,14 @@
 # PRD — Sobriety Select SDR Agent (SSA)
 
-**Version:** 1.4
+**Version:** 1.5
 **Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
 **Last Updated:** May 28, 2026
+
+**Changes from v1.4 (May 28, 2026):**
+
+- **Vm-1 after-hours send window (§9.9).** Approved vm-1 drafts dial only outside local Mon–Fri 9 AM–6 PM or anytime weekends (`isVm1SendWindowOpen`). `sendApproved` retries every 10 min until the window opens.
+- **Vm-1 human pickup bridges to Sonia (§9.9).** Same live-bridge path as vm-2: prep brief email + whisper; Sonia handles gatekeepers manually. No conversational AI agent.
 
 **Changes from v1.3 (May 28, 2026):**
 
@@ -463,24 +468,23 @@ Same as v1.1, plus:
 
 **Two-touch sequence:**
 
-| Touch | Draft kind | Cron | Human answers | Machine / no live human |
-| --- | --- | --- | --- | --- |
-| 1st | `voicemail` | `dropVoicemails` 2 PM ET | **Hang up immediately** — no bridge, no script | Play MP3 after beep |
-| 2nd | `voicemail-2` | `runSecondCalls` (~3 business days after vm-1 dropped) | **Bridge to `SONIA_PHONE`** — prep brief emailed, whisper in Sonia's ear | Play MP3 after beep |
+| Touch | Draft kind | Cron | Send window | Human answers | Machine / no live human |
+| --- | --- | --- | --- | --- | --- |
+| 1st | `voicemail` | `dropVoicemails` 2 PM ET | **After-hours only** — outside local Mon–Fri 9 AM–6 PM, or anytime Sat/Sun (`isVm1SendWindowOpen`) | **Bridge to `SONIA_PHONE`** — prep brief + whisper (first-live-connect script) | Play MP3 after beep |
+| 2nd | `voicemail-2` | `runSecondCalls` (~3 business days after vm-1 dropped) | Anytime (approve when Sonia can pick up within ~10 min) | **Bridge to `SONIA_PHONE`** — prep brief + whisper | Play MP3 after beep |
 
-**Gatekeepers and receptionists.** Treatment-center main lines are frequently answered by front desk staff during business hours — especially 24/7 admissions lines. Twilio AMD does not distinguish gatekeeper from owner; both classify as `human`.
+**Gatekeepers and receptionists.** Treatment-center main lines are frequently answered by front desk staff — especially 24/7 admissions lines. Twilio AMD does not distinguish gatekeeper from owner; both classify as `human` and trigger the live bridge on vm-1 and vm-2.
 
-- **Vm-1:** Human pickup (gatekeeper or owner) → hang up. Optimized for after-hours / no-answer → facility voicemail box. During business hours, vm-1 connect rate to a live human is expected to be high; many attempts will ring and disconnect without leaving a message.
-- **Vm-2:** Human pickup → live bridge to Sonia. This is the designed gatekeeper path: Sonia asks for the owner by name (when enriched), or for whoever handles marketing/partnerships, takes a verbal message, or gets transferred. Prep brief (`buildPrepBriefEmail`) includes owner name/title and a fallback prompt when owner is unknown.
-- **Automated gatekeeper navigation** (ask for owner → hold → transfer → drop VM on extension; or leave scripted message with receptionist) is a **V1 non-goal** (§14). It requires a live conversational voice agent, not pre-rendered AMD drops.
+- **Vm-1 send window** reduces business-hours dials so AMD is more likely to reach a voicemail box. If a human still answers (e.g., overnight admissions desk), the call bridges to Sonia — same gatekeeper playbook as vm-2.
+- **Vm-2** remains the primary business-hours live touch when Sonia is available.
+- Prep brief (`buildPrepBriefEmail`) includes owner name/title, gatekeeper script, and touch-specific pitch angle.
+- **Automated gatekeeper navigation** (AI asks for owner → hold → transfer → drop VM) remains a **V1 non-goal** (§14).
 
 **Operator guidance for recovery centers:**
 
-- Approve vm-1 drafts expecting best results **outside business hours** (evenings/weekends) when lines roll to voicemail without a live answer.
-- Approve vm-2 drafts only when Sonia can pick up within ~10 minutes (`sendApproved` interval) — this is the live/gatekeeper touch.
+- Approve vm-1 anytime from `/queue` — sends automatically once the lead's **local after-hours window** opens (no extra action).
+- Approve vm-2 only when Sonia can pick up within ~10 minutes (`sendApproved` interval).
 - Restricted-state leads use `/manual-vm-queue` (human-placed call or VM).
-
-**Future enhancement (not in V1):** optional after-hours-only send window for vm-1 (e.g., 6–9 PM local facility time) to improve machine-detection yield without changing architecture.
 
 ### 9.10 Post-Sale Workflows — unchanged from v1.1
 

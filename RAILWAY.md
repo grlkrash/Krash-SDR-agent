@@ -211,6 +211,42 @@ CRON_JOB=checkCostCaps tsx src/scripts/runCron.ts
 
 Check `AuditLog` for `cron.success` / `costCap.alert-sent` rows.
 
+### Twilio (voicemail drops)
+
+ElevenLabs renders the MP3; **Twilio places the call and plays it**. No ElevenLabs config in Twilio — only env vars on Railway/local.
+
+**Twilio Console checklist:**
+
+1. **Buy a number** — Phone Numbers → Manage → Buy a number. Must include **Voice**. This becomes `TWILIO_FROM_NUMBER` in E.164 (`+1XXXXXXXXXX`).
+2. **Copy credentials** — Account → API keys & tokens → `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`.
+3. **Enable US outbound** — Voice → Settings → **Geo permissions** → allow **United States** (and Canada if needed).
+4. **Do not set a Voice webhook on the number.** Outbound calls pass `url` and `statusCallback` per call in code. Leaving the number's Voice URL blank is correct.
+5. **Trial account?** Verify any test destination numbers under Phone Numbers → Verified Caller IDs, or upgrade to paid.
+6. **Lookups Line Type Intelligence** — used automatically by `isLandline()` ($0.008/lookup). No separate console toggle; requires a paid account with Lookups enabled.
+
+**Railway env (web + cron services):**
+
+| Variable | Value |
+| --- | --- |
+| `TWILIO_ACCOUNT_SID` | From Twilio console |
+| `TWILIO_AUTH_TOKEN` | From Twilio console |
+| `TWILIO_FROM_NUMBER` | Your Twilio number, E.164 |
+| `PUBLIC_URL` | `https://${{ssa-web.RAILWAY_PUBLIC_DOMAIN}}` — **required on cron too** so Twilio can fetch `/webhook/twilio/*` and `/audio/:draftId` |
+| `ELEVENLABS_API_KEY` | From ElevenLabs |
+| `ELEVENLABS_VOICE_ID` | `5cYnUBT6ZigM7aonjr3y` (cloned voice) |
+| `SONIA_PHONE` | Your cell E.164 — live bridge target |
+| `BRIEF_RECIPIENT` | Email for prep briefs on human pickup |
+
+**Smoke test after deploy:**
+
+```bash
+curl https://YOUR_PUBLIC_URL/health
+```
+
+Then: approve one voicemail draft in `/queue` → `sendApproved` fires within 10 min → vm-1 dials only in the lead's **local after-hours window** (Mon–Fri before 9 AM or after 6 PM, or anytime weekends). Check `AuditLog` for `sender.voicemail-dropped` or `sender.voicemail-deferred-send-window`.
+
+Human pickup on vm-1 or vm-2 → prep brief email + call bridges to `SONIA_PHONE`.
+
 ## 7. Cost cap alerts
 
 `checkCostCaps` runs daily at **5:30 PM Eastern** via the cron tick. It emails `BRIEF_RECIPIENT` when Claude, Serper, Voyage, or Places approach 80%/100% of PRD §16 caps. No extra Railway cost — one more job inside the existing 5-min tick.
@@ -221,12 +257,7 @@ PRD §16 budgets **~$12/mo** for Railway web + Postgres + cron tick (Hobby + sma
 
 ## Jobs not wired yet
 
-These stay `enabled: false` in `src/shared/cronSchedule.ts` until their scripts land:
-
-- ~~`draftFollowups`~~ (enabled — 7:00 AM ET nudge batch)
-- `dropVoicemails`
-
-`refreshGoogleSignals` runs Mondays 4:00 AM ET via `refreshIntentSignals`.
+None — all cron jobs in `src/shared/cronSchedule.ts` are enabled unless you flip `enabled: false` locally.
 
 ## Build troubleshooting
 

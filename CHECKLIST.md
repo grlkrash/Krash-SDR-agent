@@ -5,8 +5,8 @@
 - [ ] HubSpot Service Key configured with all required scopes
 - [ ] HubSpot custom properties created (setupHubspotCustomProperties.ts)
 - [ ] Gmail OAuth refresh token in Railway env (run gmailAuth.ts locally first)
-- [ ] Twilio number purchased
-- [ ] ElevenLabs voice cloned (Sonia's own voice for authenticity)
+- [ ] Twilio number purchased, US geo permissions enabled, env vars set (see `RAILWAY.md` §6 Twilio)
+- [ ] ElevenLabs voice cloned — `ELEVENLABS_VOICE_ID=5cYnUBT6ZigM7aonjr3y` in Railway
 - [ ] SPF, DKIM, DMARC on sobrietyselect.com confirmed via mxtoolbox
 - [ ] Domain warmup started via Mailwarm (4 weeks before bulk)
 - [ ] LegitScript status confirmed (or risk flagged)
