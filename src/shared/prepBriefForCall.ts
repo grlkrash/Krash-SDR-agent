@@ -106,6 +106,11 @@ export const buildPrepBriefEmail = (
     '- Open with the signal above (intake/census language, never "visibility")',
     '- They got your voicemail — acknowledge it briefly, ask if they had a sec to listen',
     '- Soft ask: 10-min walkthrough this week or next',
+    '',
+    '## If receptionist / gatekeeper',
+    '- Ask for owner by name if known above; otherwise "who handles marketing or partnerships?"',
+    '- If they take a verbal message: 15-second pitch + your callback number',
+    '- If they transfer you to VM: you\'re live — leave a personalized message yourself',
   ].join('\n');
   return { subject, body };
 };

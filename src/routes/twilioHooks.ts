@@ -5,9 +5,11 @@
 // is a future hardening pass; for now, the only side effects are AuditLog
 // rows + HubSpot timeline engagements, both of which we can clean up.
 //
-// 1. POST /webhook/twilio/twiml?draftId=... — Twilio hits this after machine
-//    detection completes; we return TwiML that plays the MP3 if a machine
-//    answered, hangs up if a human picked up.
+// 1. POST /webhook/twilio/twiml?draftId=... — Twilio hits this after AMD
+//    (Answering Machine Detection) completes. Machine → play pre-rendered MP3.
+//    Human on vm-1 → hang up. Human on vm-2 → bridge to Sonia (gatekeeper or
+//    owner — she handles live). This is NOT ringless voicemail; the callee's
+//    phone rings like a normal outbound call.
 // 2. POST /webhook/twilio/status?draftId=... — call lifecycle status callback;
 //    we log the full body to AuditLog + write a HubSpot CALL engagement.
 // 3. GET /audio/:draftId — serves the raw MP3 buffer Twilio's <Play> verb

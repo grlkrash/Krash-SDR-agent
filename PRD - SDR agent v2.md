@@ -1,9 +1,14 @@
 # PRD — Sobriety Select SDR Agent (SSA)
 
-**Version:** 1.3
+**Version:** 1.4
 **Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
 **Last Updated:** May 28, 2026
+
+**Changes from v1.3 (May 28, 2026):**
+
+- **Voicemail drops clarified (§9.9).** Outbound calls use Twilio AMD (`DetectMessageEnd`) — the phone **rings** like a normal call; pre-rendered ElevenLabs MP3 plays only when a machine is detected. This is **not** ringless voicemail (carrier-side silent injection). Documented vm-1 vs vm-2 behavior, gatekeeper/receptionist handling, and explicit non-goal for automated gatekeeper navigation.
+- **ElevenLabs model locked to `eleven_multilingual_v2`** for cloned-voice voicemail renders (quality over Turbo latency/cost).
 
 **Changes from v1.2 (May 28, 2026):**
 
@@ -155,7 +160,7 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 |Scraping  |Playwright + Cheerio                             |
 |CRM       |HubSpot Free + `@hubspot/api-client` (auth via Service Key — token in `HUBSPOT_ACCESS_TOKEN`, identical bearer-header transport as a private app; scopes managed on the Service Key in HubSpot UI)|
 |Email send|Gmail API via OAuth2 (`sonia@sobrietyselect.com`)|
-|Voice     |Twilio + ElevenLabs TTS (voicemail only)         |
+|Voice     |Twilio AMD voicemail drop + ElevenLabs TTS (`eleven_multilingual_v2`, pre-render only) |
 |Hosting   |Railway (web + cron + Postgres)                  |
 
 **Explicitly excluded:** Redis, WebSockets, OpenAI, Docker Compose, BullMQ, Turborepo, custom React UI, Salesforce, microservices.
@@ -446,7 +451,36 @@ Same as v1.1, plus:
 
 ### 9.8 Pipeline Scoring + Brief — unchanged from v1.1 (sorts by `score × expectedCommission`)
 
-### 9.9 Voicemail Drops — unchanged from v1.1
+### 9.9 Voicemail Drops (AMD — not ringless)
+
+**What this is.** A standard Twilio outbound call with Answering Machine Detection (`DetectMessageEnd`, 30s timeout). The callee's phone **rings**. If Twilio classifies the answer as a machine (voicemail greeting + beep), Twilio plays a pre-rendered ElevenLabs MP3 (`eleven_multilingual_v2`, cloned Sonia voice). If a human answers, behavior depends on touch number (below).
+
+**What this is not.** Ringless voicemail (RVM) — silent carrier-side injection without ringing — is explicitly out of scope. Twilio does not offer RVM; third-party RVM vendors carry additional TCPA/carrier-block risk and are not used.
+
+**ElevenLabs.** One TTS render per draft at draft-creation time; MP3 stored on `Draft.audioMp3`. Re-approval of the same draft never re-renders. Model: `eleven_multilingual_v2` via `ELEVENLABS_VOICE_ID` (cloned voice).
+
+**Safety gates (before any paid API call):** landline-only (`isLandline` via Twilio Lookups), `doNotContact` / Suppression, state matrix (`MANUAL_ONLY_US_STATES`: FL, OK, WA, IN, MA → manual queue), one vm draft per lead per touch.
+
+**Two-touch sequence:**
+
+| Touch | Draft kind | Cron | Human answers | Machine / no live human |
+| --- | --- | --- | --- | --- |
+| 1st | `voicemail` | `dropVoicemails` 2 PM ET | **Hang up immediately** — no bridge, no script | Play MP3 after beep |
+| 2nd | `voicemail-2` | `runSecondCalls` (~3 business days after vm-1 dropped) | **Bridge to `SONIA_PHONE`** — prep brief emailed, whisper in Sonia's ear | Play MP3 after beep |
+
+**Gatekeepers and receptionists.** Treatment-center main lines are frequently answered by front desk staff during business hours — especially 24/7 admissions lines. Twilio AMD does not distinguish gatekeeper from owner; both classify as `human`.
+
+- **Vm-1:** Human pickup (gatekeeper or owner) → hang up. Optimized for after-hours / no-answer → facility voicemail box. During business hours, vm-1 connect rate to a live human is expected to be high; many attempts will ring and disconnect without leaving a message.
+- **Vm-2:** Human pickup → live bridge to Sonia. This is the designed gatekeeper path: Sonia asks for the owner by name (when enriched), or for whoever handles marketing/partnerships, takes a verbal message, or gets transferred. Prep brief (`buildPrepBriefEmail`) includes owner name/title and a fallback prompt when owner is unknown.
+- **Automated gatekeeper navigation** (ask for owner → hold → transfer → drop VM on extension; or leave scripted message with receptionist) is a **V1 non-goal** (§14). It requires a live conversational voice agent, not pre-rendered AMD drops.
+
+**Operator guidance for recovery centers:**
+
+- Approve vm-1 drafts expecting best results **outside business hours** (evenings/weekends) when lines roll to voicemail without a live answer.
+- Approve vm-2 drafts only when Sonia can pick up within ~10 minutes (`sendApproved` interval) — this is the live/gatekeeper touch.
+- Restricted-state leads use `/manual-vm-queue` (human-placed call or VM).
+
+**Future enhancement (not in V1):** optional after-hours-only send window for vm-1 (e.g., 6–9 PM local facility time) to improve machine-detection yield without changing architecture.
 
 ### 9.10 Post-Sale Workflows — unchanged from v1.1
 

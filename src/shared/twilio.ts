@@ -1,6 +1,6 @@
-// Twilio client + landline gate for voicemail drops.
+// Twilio client + landline gate for AMD voicemail drops.
 //
-// `isLandline` is the TCPA gate before any ringless-VM attempt. Twilio Lookups
+// `isLandline` is the TCPA gate before any outbound VM attempt. Twilio Lookups
 // v2 with `line_type_intelligence` returns a `type` of 'landline' | 'mobile' |
 // 'fixedVoip' | 'nonFixedVoip' | 'personal' | 'tollFree' | 'voicemail' |
 // 'unknown'. We allow ONLY 'landline' through — every other value (including

@@ -1293,7 +1293,7 @@ src/shared/eleven.ts:
 Export `renderVoicemailMp3(text: string): Promise<Buffer>`:
 POST https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}?output_format=mp3_44100_128
 Headers: xi-api-key, Content-Type: application/json
-Body: { text, model_id: 'eleven_turbo_v2_5' }
+Body: { text, model_id: 'eleven_multilingual_v2' }
 On !response.ok throw. Return Buffer.from(await response.arrayBuffer()).
 
 STOP.

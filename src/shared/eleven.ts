@@ -1,13 +1,14 @@
 // ElevenLabs text-to-speech wrapper for voicemail audio.
 //
-// `eleven_turbo_v2_5` is the fastest, cheapest model that's good enough for a
-// ~25-second cold-call voicemail. We render MP3 at 44.1 kHz / 128 kbps because
-// Twilio's `<Play>` verb plays MP3 directly — no transcoding step. The full
-// audio buffer is persisted on Draft.audioMp3 so re-approval of the same
-// draft never pays ElevenLabs twice.
+// `eleven_multilingual_v2` is ElevenLabs' recommended model for the cloned
+// Sonia voice — natural, life-like delivery on ~25-second cold-call scripts.
+// Latency doesn't matter here (MP3 is pre-rendered at draft time, not streamed
+// live). We render at 44.1 kHz / 128 kbps because Twilio's `<Play>` verb plays
+// MP3 directly — no transcoding step. The full audio buffer is persisted on
+// Draft.audioMp3 so re-approval of the same draft never pays ElevenLabs twice.
 
 const ELEVEN_BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
-const MODEL_ID = 'eleven_turbo_v2_5';
+const MODEL_ID = 'eleven_multilingual_v2';
 const OUTPUT_FORMAT = 'mp3_44100_128';
 
 // Return type is the narrow `Uint8Array<ArrayBuffer>` so Prisma's `Bytes`
