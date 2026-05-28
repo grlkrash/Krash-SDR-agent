@@ -19,6 +19,7 @@ import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import { claude, extractText } from '../shared/claude.js';
 import { isLandline } from '../shared/twilio.js';
 import { renderVoicemailMp3 } from '../shared/eleven.js';
+import { formatPhoneForSpeech } from '../shared/formatPhoneForSpeech.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import {
   VOICEMAIL_SCRIPT_SYSTEM,
@@ -102,7 +103,7 @@ export const dropVoicemail = async (leadId: string): Promise<void> => {
     return;
   }
 
-  const phoneCallback = process.env.SONIA_PHONE ?? '';
+  const phoneCallback = formatPhoneForSpeech(process.env.SONIA_PHONE ?? '');
   // Twilio Lookups Line Type Intelligence — landline-only is the TCPA gate.
   // VoIP/mobile/unknown all return false → we persist a tombstone draft so
   // we don't retry on the next dropVoicemails tick. Costs $0.008/lookup.

@@ -20,7 +20,7 @@ HARD RULES:
 3. No banned words: revolutionary, game-changer, synergy, leverage, unlock, transform, cutting-edge.
 4. Never mention price, tier names, dollar amounts, or specific package names.
 5. Never read out a URL.
-6. End with the literal phone number passed in the user message — not the placeholder "{PHONE}".
+6. End with the literal callback phone from the user message — already formatted for speech (e.g. "(513) 299-8805"). Read it exactly; do not add +1 or country code.
 
 Output ONLY the spoken text. No quotation marks, no preamble, no markdown fences, no subject line.`;
 
@@ -45,5 +45,5 @@ export const buildVoicemailScriptUser = (
     evidenceQuote: enrichment.evidenceQuote,
   };
 
-  return `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nCallback phone to read at the end: ${phone}\n\nWrite the voicemail script per the system instructions. Use the owner's first name only if present in owner.name. Always mention facility name and city. Pick the strongest observation supported by the JSON — never invent reviews, hiring, or directory facts that are absent or false in signals.`;
+  return `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nCallback phone to read at the end (spoken format — use exactly): ${phone}\n\nWrite the voicemail script per the system instructions. Use the owner's first name only if present in owner.name. Always mention facility name and city. Pick the strongest observation supported by the JSON — never invent reviews, hiring, or directory facts that are absent or false in signals.`;
 };

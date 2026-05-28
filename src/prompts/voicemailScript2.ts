@@ -7,7 +7,7 @@ Mention the facility by name and city. If owner first name is known, use it. Ack
 HARD RULES:
 1. ≥60% of the script must reference THIS prospect (facility name, city, owner name, review count, hiring fact, missing-directory fact).
 2. Different specific fact than what would have been the obvious choice for voicemail 1. Vary the angle.
-3. End with the literal phone number from the user message — not the placeholder "{PHONE}".
+3. End with the literal callback phone from the user message — already formatted for speech. Read it exactly; do not add +1 or country code.
 4. No banned words: revolutionary, game-changer, synergy, leverage, unlock, transform, cutting-edge.
 5. Never mention price, tier names, dollar amounts, or specific package names.
 6. Never read out a URL.
@@ -35,5 +35,5 @@ export const buildVoicemailScript2User = (
     evidenceQuote: enrichment.evidenceQuote,
   };
 
-  return `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nCallback phone to read at the end: ${phone}\n\nWrite the second-touch voicemail per the system instructions. Pick a specific fact DIFFERENT from the obvious lead — if the strongest signal is hiring, pick reviews or a missing-directory observation instead so the two voicemails don't repeat each other.`;
+  return `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nCallback phone to read at the end (spoken format — use exactly): ${phone}\n\nWrite the second-touch voicemail per the system instructions. Pick a specific fact DIFFERENT from the obvious lead — if the strongest signal is hiring, pick reviews or a missing-directory observation instead so the two voicemails don't repeat each other.`;
 };

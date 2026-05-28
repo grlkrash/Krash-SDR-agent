@@ -15,6 +15,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import { claude, extractText } from '../shared/claude.js';
 import { renderVoicemailMp3 } from '../shared/eleven.js';
+import { formatPhoneForSpeech } from '../shared/formatPhoneForSpeech.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import {
   VOICEMAIL_SCRIPT_2_SYSTEM,
@@ -110,7 +111,7 @@ export const dropVoicemail2 = async (leadId: string): Promise<void> => {
     return;
   }
 
-  const phoneCallback = process.env.SONIA_PHONE ?? '';
+  const phoneCallback = formatPhoneForSpeech(process.env.SONIA_PHONE ?? '');
   const msg = await claude.messages.create({
     model: MODEL,
     max_tokens: MAX_TOKENS,
