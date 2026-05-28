@@ -81,21 +81,27 @@ That means Prisma fell back to the **build-only placeholder** — the web servic
 
 On **both** `ssa-web` and `ssa-cron` → **Variables** → add `DATABASE_URL`.
 
-**Option A (recommended after Postgres reconnect)** — composite reference; survives plugin reconnects better than a single `${{Postgres.DATABASE_URL}}` copy:
+**Recommended — single picker reference (do not type by hand):**
+
+1. Delete any existing `DATABASE_URL` row.
+2. Add variable → use the **reference picker** (chip icon) → select your Postgres box → `DATABASE_URL`.
+3. Railway inserts `${{<exact-canvas-name>.DATABASE_URL}}` for you.
+
+Do **not** paste a hand-built composite like `postgresql://${{Postgres.PGUSER}}:…` — if the service name is wrong by even one character, every ref resolves to `""` and the value becomes `postgresql://:@:/` (17 chars).
+
+**Alternative — five separate picker refs** (if single `DATABASE_URL` keeps going stale):
 
 ```text
-postgresql://${{Postgres.PGUSER}}:${{Postgres.PGPASSWORD}}@${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}
+PGHOST=${{<name>.PGHOST}}
+PGPORT=${{<name>.PGPORT}}
+PGUSER=${{<name>.PGUSER}}
+PGPASSWORD=${{<name>.PGPASSWORD}}
+PGDATABASE=${{<name>.PGDATABASE}}
 ```
 
-Replace `Postgres` with your database service’s canvas name (e.g. `ssa-db`).
+Startup builds the connection string from these when `DATABASE_URL` is missing or invalid.
 
-**Option B** — one reference:
-
-| Variable | Value |
-| --- | --- |
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
-
-Use the variable picker: select your **Postgres** service → `DATABASE_URL`. If the database service has a different name (e.g. `ssa-db`), use `${{ssa-db.DATABASE_URL}}` instead.
+**Emergency** — Postgres service → Variables → reveal `DATABASE_URL` → copy the full string → paste into web/cron `DATABASE_URL`. Re-pick via picker after the next Postgres reconnect.
 
 ### `DATABASE_URL` goes empty on every redeploy
 
