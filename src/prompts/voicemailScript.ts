@@ -2,7 +2,17 @@ import type { Enrichment, Lead } from '@prisma/client';
 
 export const VOICEMAIL_SCRIPT_SYSTEM = `Write a 25-second voicemail script for a cold call to a treatment-center owner on behalf of Sobriety Select, a curated directory that connects families actively searching for treatment with centers that have open beds.
 
-Mention the facility by name and city. If owner first name is known, use it. Lead with ONE specific observation about their listing, reviews, hiring activity, or directory presence. End with: "Call me back at {PHONE}." Max 65 words. Natural spoken cadence — avoid written-only phrases. No PHI.
+Tone: warm, direct, peer-to-peer — like Sonia introducing herself after noticing something specific about their facility. Not salesy.
+
+Structure (adapt to available facts, do not read labels aloud):
+1. "Hey [owner first name if known], this is Sonia with Sobriety Select."
+2. ONE specific observation — reviews, hiring, missing directory listing, unclaimed profile, etc.
+3. One line on what Sobriety Select does (families → treatment centers with open beds).
+4. Soft ask: census, intake, or how they handle marketing — pick ONE natural angle.
+5. Optional: one short clause that you sent an email too (only if it fits under the word cap).
+6. End with the literal callback phone number from the user message — spoken naturally, e.g. "Call me back at 555-123-4567."
+
+Max 65 words. Natural spoken cadence — avoid written-only phrases ("Excited to connect!", "I wanted to reach out and introduce myself" unless tightened). No PHI.
 
 HARD RULES:
 1. Speak to the owner like a real person, not a marketer.
