@@ -28,6 +28,11 @@ model Lead {
   sourceMeta       Json
   hubspotCompanyId String?
   doNotContact     Boolean  @default(false)
+  // Documented prior express written consent (e.g. click-through SOW) —
+  // overrides manual-only state gate in isAutoVoicemailAllowed. Landline
+  // and suppression checks still apply.
+  priorWrittenConsent   Boolean   @default(false)
+  priorWrittenConsentAt DateTime?
   enrichment       Enrichment?
   drafts           Draft[]
   createdAt        DateTime @default(now())

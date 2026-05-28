@@ -47,6 +47,7 @@ export const MANUAL_ONLY_US_STATES = new Set<string>([
 export const isAutoVoicemailAllowed = (
   phoneE164: string,
   state: string | null,
+  priorWrittenConsent = false,
 ): EligibilityResult => {
   const parsed = parsePhoneNumberFromString(phoneE164);
   const country = parsed?.country ?? null;
@@ -56,6 +57,7 @@ export const isAutoVoicemailAllowed = (
   const normalizedState = state?.toUpperCase().trim() ?? '';
   if (normalizedState === '') return { allowed: false, reason: 'unknown-state' };
   if (MANUAL_ONLY_US_STATES.has(normalizedState)) {
+    if (priorWrittenConsent) return { allowed: true };
     return { allowed: false, reason: `state-law-restricted:${normalizedState}` };
   }
   return { allowed: true };

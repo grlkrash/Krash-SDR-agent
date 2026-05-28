@@ -69,7 +69,7 @@ export const dropVoicemail2 = async (leadId: string): Promise<void> => {
   // Defense-in-depth: voicemail-1 was only dropped if voicemail-1's
   // eligibility check passed. But the state matrix could have been
   // tightened since (e.g., counsel added a new restricted state). Re-check.
-  const eligibility = isAutoVoicemailAllowed(phoneE164, lead.state);
+  const eligibility = isAutoVoicemailAllowed(phoneE164, lead.state, lead.priorWrittenConsent);
   if (!eligibility.allowed) {
     await prisma.draft.create({
       data: {

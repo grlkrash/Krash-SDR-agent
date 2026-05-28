@@ -3,8 +3,8 @@
 // dropVoicemail loads a lead, generates a 25-second TTS script via Claude,
 // renders it to MP3 via ElevenLabs, and persists a Draft of kind='voicemail'
 // in 'pending' status so the operator can approve it from /queue. After
-// approval, src/outreach/sender.ts routes the draft to Twilio (machine-
-// detection ringless drop).
+// approval, src/outreach/sender.ts routes the draft to Twilio (AMD voicemail
+// drop — the phone rings; MP3 plays only when Twilio detects a machine).
 //
 // Idempotency / safety rails:
 // - Skip if phone is unknown, lead.doNotContact, or phoneE164 is in Suppression.
@@ -84,7 +84,7 @@ export const dropVoicemail = async (leadId: string): Promise<void> => {
   // Claude, ElevenLabs) so blocked leads cost us $0. Tombstone draft tells
   // future ticks not to retry and surfaces the lead in the daily brief's
   // "manual VM required" section.
-  const eligibility = isAutoVoicemailAllowed(phoneE164, lead.state);
+  const eligibility = isAutoVoicemailAllowed(phoneE164, lead.state, lead.priorWrittenConsent);
   if (!eligibility.allowed) {
     await prisma.draft.create({
       data: {

@@ -164,7 +164,7 @@ const dropVoicemailViaTwilio = async (
   // Re-check eligibility at send time. The state matrix could have been
   // tightened between draft-time and now; we'd rather mark the draft
   // sent-suppressed than fire into a newly-restricted jurisdiction.
-  const eligibility = isAutoVoicemailAllowed(phoneE164, lead.state);
+  const eligibility = isAutoVoicemailAllowed(phoneE164, lead.state, lead.priorWrittenConsent);
   if (!eligibility.allowed) {
     await prisma.draft.update({
       where: { id: draft.id },
