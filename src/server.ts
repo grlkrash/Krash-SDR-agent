@@ -73,6 +73,11 @@ const isFulfilled = (
   r: PromiseSettledResult<unknown>,
 ): r is PromiseFulfilledResult<unknown> => r.status === 'fulfilled';
 
+// Railway deploy gate only — no DB or external APIs (see railway.toml healthcheckPath).
+app.get('/health/live', (_req, res) => {
+  res.status(200).json({ ok: true, uptime: process.uptime(), version: VERSION });
+});
+
 app.get('/health', async (_req, res) => {
   const [pgRes, hsRes, claudeRes, queueRes, cronRes] = await Promise.allSettled([
     checkPostgres(),
@@ -112,5 +117,8 @@ app.use('/', copilotRouter);
 app.use('/', unsubscribeRouter);
 
 const port = Number(process.env.PORT) || DEFAULT_PORT;
+const host = '0.0.0.0';
 
-app.listen(port);
+app.listen(port, host, () => {
+  console.error(`[ssa-web] listening on http://${host}:${port}`);
+});

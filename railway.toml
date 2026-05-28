@@ -10,5 +10,5 @@ buildCommand = "npx prisma generate && npm run build && npx playwright install -
 
 [deploy]
 startCommand = "npm run start:web"
-healthcheckPath = "/health"
+healthcheckPath = "/health/live"
 restartPolicyType = "ON_FAILURE"

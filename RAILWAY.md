@@ -40,7 +40,7 @@ npm run start:web
 
 Settings → **Networking** → Generate domain (for `PUBLIC_URL`).
 
-Settings → **Health check** → Path: `/health`
+Settings → **Health check** → Path: `/health/live` (deploy liveness only; use `/health` for full Postgres + HubSpot + Claude checks)
 
 Or use the committed `railway.toml` (Railway picks it up automatically for the first service).
 
@@ -79,13 +79,39 @@ P1001: Can't reach database server at `127.0.0.1:5432`
 
 That means Prisma fell back to the **build-only placeholder** — the web service never received a real Postgres URL.
 
-On **both** `ssa-web` and `ssa-cron` → **Variables** → add:
+On **both** `ssa-web` and `ssa-cron` → **Variables** → add `DATABASE_URL`.
+
+**Option A (recommended after Postgres reconnect)** — composite reference; survives plugin reconnects better than a single `${{Postgres.DATABASE_URL}}` copy:
+
+```text
+postgresql://${{Postgres.PGUSER}}:${{Postgres.PGPASSWORD}}@${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}
+```
+
+Replace `Postgres` with your database service’s canvas name (e.g. `ssa-db`).
+
+**Option B** — one reference:
 
 | Variable | Value |
 | --- | --- |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
 
 Use the variable picker: select your **Postgres** service → `DATABASE_URL`. If the database service has a different name (e.g. `ssa-db`), use `${{ssa-db.DATABASE_URL}}` instead.
+
+### `DATABASE_URL` goes empty on every redeploy
+
+Symptom: you re-pick `${{Postgres.DATABASE_URL}}`, deploy works once, next deploy fails with `ECONNREFUSED` or `DATABASE_URL is missing or empty` in logs.
+
+Cause: the reference still points at a **deleted or renamed** Postgres service from an old “reconnect”. Railway resolves it to `""`.
+
+Fix:
+
+1. Note the **exact** Postgres service name on the canvas today.
+2. On **ssa-web** and **ssa-cron**, **delete** the `DATABASE_URL` row entirely.
+3. Re-add using **Option A** above (composite) or re-pick Option B from the **current** Postgres service.
+4. Redeploy **ssa-web** first; check Deploy logs for `[ssa-web] DATABASE_URL present (host=postgres.railway.internal, …)`.
+5. Redeploy **ssa-cron**.
+
+Startup runs `validateEnv.js` then `waitForDatabase.js` on both services before Prisma touches the DB.
 
 ### Private vs public Postgres URL — pick the private one
 
@@ -204,6 +230,10 @@ These stay `enabled: false` in `src/shared/cronSchedule.ts` until their scripts 
 | `P1001` / `127.0.0.1:5432` / database `"build"` | **`DATABASE_URL` not set on the web service.** Add `${{Postgres.DATABASE_URL}}` → redeploy. |
 | `UndefinedVar: $NIXPACKS_PATH` | Railway/Nixpacks lint warning in generated Dockerfile — usually harmless if the build continues. |
 | Build succeeds but `/health` fails | Set runtime `DATABASE_URL`, run `CREATE EXTENSION vector`, check HubSpot/Claude keys. |
+| `ECONNREFUSED` on `auditLog` / cron | `DATABASE_URL` empty at runtime — use composite URL (§4), redeploy web + cron. |
+| `DATABASE_URL is missing or empty` in Deploy logs | Same — stale `${{Postgres.*}}` reference; delete and re-add on **both** services. |
+| `DATABASE_URL` empty after redeploy / reconnect Postgres | Delete the variable on **ssa-web** and **ssa-cron**, re-add via picker: `${{Postgres.DATABASE_URL}}`. Stale service references often resolve to `""`. Check **Deploy** logs for `[ssa-web] FATAL: DATABASE_URL is missing or empty`. |
+| Healthcheck fails but Deploy logs show `listening on http://0.0.0.0:…` | Ensure health path is `/health/live` (not `/health`). Full `/health` can exceed the probe window when HubSpot/Claude are slow. |
 
 ## Manual one-off runs
 

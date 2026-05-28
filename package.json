@@ -7,8 +7,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "start:web": "npx prisma migrate deploy && node dist/server.js",
-    "start:cron": "node dist/scripts/cronTick.js",
+    "start:web": "node dist/scripts/validateEnv.js && node dist/scripts/waitForDatabase.js && npx prisma migrate deploy && node dist/server.js",
+    "start:cron": "node dist/scripts/validateEnv.js && node dist/scripts/waitForDatabase.js && node dist/scripts/cronTick.js",
     "cron:one": "node dist/scripts/runCron.js",
     "kb:reindex": "tsx src/scripts/reindexKB.ts",
     "exclusions:import": "tsx src/scripts/importExclusions.ts",
@@ -19,7 +19,7 @@
     "postinstall": "playwright install chromium"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
