@@ -12,8 +12,11 @@ const tryParseUrl = (raw: string): URL | null => {
   }
 };
 
+const isSkeletonUrl = (raw: string): boolean =>
+  raw === EMPTY_REF_SKELETON || (raw.startsWith('postgresql://') && tryParseUrl(raw)?.hostname === '');
+
 const isUsableUrl = (raw: string): boolean => {
-  if (raw === '' || raw === EMPTY_REF_SKELETON) return false;
+  if (raw === '' || isSkeletonUrl(raw)) return false;
   if (raw.includes(BUILD_PLACEHOLDER_HOST)) return false;
   if (raw.includes('${{')) return false;
   const parsed = tryParseUrl(raw);
@@ -35,18 +38,28 @@ const buildFromPgVars = (): string | null => {
   return `postgresql://${encUser}:${encPass}@${host}:${port}/${database}`;
 };
 
+const pgVarDiagnostics = (): string => {
+  const flag = (name: string): string => {
+    const v = process.env[name]?.trim() ?? '';
+    if (v === '') return `${name}=empty`;
+    if (v.includes('${{')) return `${name}=unresolved-ref`;
+    return `${name}=set(len=${v.length})`;
+  };
+  return ['PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE'].map(flag).join(', ');
+};
+
 const railwayFixLines = (): string[] => [
   '',
-  'Railway fix (web AND cron services):',
-  '  A) Delete DATABASE_URL. Add via variable picker only:',
-  '       DATABASE_URL = ${{<Postgres-box-name>.DATABASE_URL}}',
-  '     Do NOT paste a composite postgresql://${{...}} string by hand.',
-  '  B) Or add five picker refs (same Postgres box name for each):',
-  '       PGHOST=${{<name>.PGHOST}}  PGPORT=${{<name>.PGPORT}}',
-  '       PGUSER=${{<name>.PGUSER}}  PGPASSWORD=${{<name>.PGPASSWORD}}',
-  '       PGDATABASE=${{<name>.PGDATABASE}}',
-  '  C) Emergency: Postgres service → Variables → copy DATABASE_URL value',
-  '     → paste into web/cron DATABASE_URL (re-pick after next reconnect).',
+  'Railway fix (web AND cron) — read Variables → Raw Editor:',
+  '  1. If DATABASE_URL value is literally "postgresql://:@:/" or starts with',
+  '     "postgresql://" and looks like a template, DELETE that row entirely.',
+  '  2. Add ONE variable via picker (chip icon):',
+  '       DATABASE_URL = ${{<your-postgres-box>.DATABASE_URL}}',
+  '     At runtime len must be 80+, host postgres.railway.internal — NOT 17.',
+  '  3. Or delete DATABASE_URL and add five picker refs: PGHOST, PGPORT,',
+  '     PGUSER, PGPASSWORD, PGDATABASE (all from the same Postgres box).',
+  '  4. Emergency: Postgres service → Variables → reveal DATABASE_URL →',
+  '     copy the full string → paste as web/cron DATABASE_URL (plain text).',
 ];
 
 export const resolveDatabaseUrl = (label = 'ssa'): string => {
@@ -55,19 +68,8 @@ export const resolveDatabaseUrl = (label = 'ssa'): string => {
   if (direct.includes('${{')) {
     throw new Error(
       [
-        `[${label}] FATAL: DATABASE_URL still contains unresolved Railway refs (\${{...}}).`,
-        'Use the variable picker — do not type service names manually.',
-        ...railwayFixLines(),
-      ].join('\n'),
-    );
-  }
-
-  if (direct === EMPTY_REF_SKELETON) {
-    throw new Error(
-      [
-        `[${label}] FATAL: DATABASE_URL is "postgresql://:@:/" (len=17).`,
-        'A hand-pasted composite URL used the wrong Postgres service name;',
-        'every ${{<X>.PG*}} ref resolved to "".',
+        `[${label}] FATAL: DATABASE_URL still contains unresolved Railway refs.`,
+        `Diagnostics: DATABASE_URL len=${direct.length}; ${pgVarDiagnostics()}`,
         ...railwayFixLines(),
       ].join('\n'),
     );
@@ -77,13 +79,34 @@ export const resolveDatabaseUrl = (label = 'ssa'): string => {
 
   const fromPg = buildFromPgVars();
   if (fromPg !== null && isUsableUrl(fromPg)) {
+    if (isSkeletonUrl(direct)) {
+      console.error(
+        `[${label}] Ignoring broken DATABASE_URL (len=17 skeleton); using PGHOST/PGUSER/PGDATABASE instead`,
+      );
+    }
     console.error(`[${label}] DATABASE_URL built from PGHOST/PGUSER/PGDATABASE refs`);
     return fromPg;
   }
 
+  if (direct === EMPTY_REF_SKELETON || isSkeletonUrl(direct)) {
+    throw new Error(
+      [
+        `[${label}] FATAL: DATABASE_URL is "postgresql://:@:/" (len=17).`,
+        'This is the OLD hand-pasted composite — not a ${{Service.DATABASE_URL}} picker.',
+        'Delete DATABASE_URL in Raw Editor, then re-add via picker OR use emergency copy.',
+        `Diagnostics: ${pgVarDiagnostics()}`,
+        ...railwayFixLines(),
+      ].join('\n'),
+    );
+  }
+
   if (direct === '') {
     throw new Error(
-      [`[${label}] FATAL: DATABASE_URL is missing or empty.`, ...railwayFixLines()].join('\n'),
+      [
+        `[${label}] FATAL: DATABASE_URL is missing or empty.`,
+        `Diagnostics: ${pgVarDiagnostics()}`,
+        ...railwayFixLines(),
+      ].join('\n'),
     );
   }
 
@@ -96,6 +119,7 @@ export const resolveDatabaseUrl = (label = 'ssa'): string => {
   throw new Error(
     [
       `[${label}] FATAL: DATABASE_URL is not a valid Postgres URL (len=${direct.length}).`,
+      `Diagnostics: ${pgVarDiagnostics()}`,
       ...railwayFixLines(),
     ].join('\n'),
   );
