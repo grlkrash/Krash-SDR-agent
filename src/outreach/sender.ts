@@ -21,6 +21,7 @@ import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
 import { twilio } from '../shared/twilio.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
+import { isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
 
 const HUBSPOT_EMAIL_DIRECTION = 'EMAIL';
 const HUBSPOT_EMAIL_STATUS_SENT = 'SENT';
@@ -177,6 +178,22 @@ const dropVoicemailViaTwilio = async (
       reason: eligibility.reason,
     });
     return;
+  }
+
+  // Vm-1 dials only outside local Mon–Fri 9 AM–6 PM (or anytime weekends).
+  // Keeps status='approved' so sendApproved retries every 10 min until the
+  // window opens — no extra operator action needed.
+  if (draft.kind === 'voicemail') {
+    const window = isVm1SendWindowOpen(lead.state);
+    if (!window.allowed) {
+      await audit('sender.voicemail-deferred-send-window', draft.id, {
+        leadId: lead.id,
+        state: lead.state,
+        reason: window.reason,
+        timezone: window.timezone,
+      });
+      return;
+    }
   }
 
   const publicUrl = process.env.PUBLIC_URL ?? '';
