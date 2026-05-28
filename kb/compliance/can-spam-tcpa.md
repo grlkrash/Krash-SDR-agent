@@ -12,6 +12,20 @@ All commercial emails sent through the SDR agent must include: (1) an accurate "
 
 Voicemail drops to mobile numbers require prior express consent under the TCPA as interpreted post-2023 rulings. The SDR agent's voicemail drops are targeted at business phone lines (the facility's main number pulled from SAMHSA or Google Places), which are generally landlines or business VoIP lines not covered by the residential-mobile TCPA provisions. Before expanding voicemail campaigns to any mobile-direct numbers, confirm consent basis. Do not call numbers on the National Do Not Call Registry for consumer-facing outreach.
 
+**AMD, not ringless.** Outbound calls ring the callee's phone normally. A pre-recorded message plays only when Twilio's Answering Machine Detection classifies the answer as a machine (voicemail box). This is not ringless voicemail (silent carrier-side injection), which is out of scope and carries separate legal/carrier risk.
+
+### State-by-state matrix (automated vs manual)
+
+The code gate lives in `src/shared/voicemailEligibility.ts` (`MANUAL_ONLY_US_STATES`: FL, OK, WA, IN, MA). Non-US numbers are blocked until a per-country program exists. Generate a printable matrix for counsel:
+
+```bash
+npm run compliance:matrix
+```
+
+Outputs land in `data/exports/` as PDF + HTML. When a lead has documented prior express written consent on file, set `Lead.priorWrittenConsent` (via `/manual-vm-queue` → **Grant consent** or DB) so automated drops are allowed even in restricted states; landline and suppression checks still apply.
+
+Restricted-state leads appear in `/manual-vm-queue` until marked **Called** — they do not disappear after 24h like the daily-brief snapshot.
+
 ## HIPAA Considerations
 
 Sobriety Select is a marketing vendor, not a covered entity or business associate. The SDR agent does not receive, store, or transmit Protected Health Information (PHI) about patients. All lead data in our database relates to facilities and their operators, not to any patient's treatment history. Maintain this boundary strictly: never ask a facility contact for patient-level data, and never store any such data if offered.

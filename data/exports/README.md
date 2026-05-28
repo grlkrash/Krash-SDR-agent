@@ -1,3 +1,32 @@
+# Exports (CSVs, compliance PDFs)
+
+Generated files land here. **Do not commit real exports** — they may contain PII or counsel review notes.
+
+## Voicemail eligibility matrix (PDF + HTML)
+
+State-by-state chart for automated vs manual voicemail drops. Includes counsel sign-off block.
+
+```bash
+npm run compliance:matrix
+```
+
+Default outputs (same date stamp):
+
+- `data/exports/voicemail-eligibility-matrix-YYYY-MM-DD.pdf`
+- `data/exports/voicemail-eligibility-matrix-YYYY-MM-DD.html`
+
+Custom path:
+
+```bash
+npm run compliance:matrix -- --output ./data/exports/counsel-review.pdf
+```
+
+**Operator UI:** open `/manual-vm-queue` (same password as `/queue`) to mark restricted-state leads as called. The daily brief links here for the full backlog (not limited to 24h).
+
+Have counsel review and sign the PDF before scaling past a ~50-lead pilot.
+
+---
+
 # Lead export for HubSpot overlap check
 
 Generated CSVs land here. **Do not commit real exports** — they contain PII.

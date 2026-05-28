@@ -9,4 +9,6 @@ data/exclusions/incoming/**/*.csv
 data/exclusions/processed/*
 !data/exclusions/processed/.gitkeep
 data/exports/*.csv
+data/exports/*.pdf
+data/exports/*.html
 !data/exports/.gitkeep
