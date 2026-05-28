@@ -2,9 +2,10 @@
 // Run daily before renewalWarnings so the 60-day window query stays accurate
 // without hand-maintaining renewal dates.
 //
-// Operator contract: set ss_contract_term_months (3, 6, or 12) when a deal
-// closes. On each renewal, update closedate to the new contract start so the
-// next ss_renewal_date is recomputed automatically.
+// Operator contract: close the deal in HubSpot (closedate). Missing
+// ss_contract_term_months defaults to 12 on each sync — no paid HubSpot
+// workflows. For 3- or 6-month contracts, set the term on the deal once.
+// On each renewal, update closedate to the new contract start.
 
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
@@ -12,11 +13,19 @@ import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/deals/mo
 import { hs, hsRetry } from '../shared/hubspot.js';
 import {
   computeRenewalDate,
+  DEFAULT_CONTRACT_TERM_MONTHS,
   formatHsDateOnly,
   hsDateOnlyEqual,
   parseContractTermMonths,
   parseHsDate,
+  type ContractTermMonths,
 } from '../shared/dealRenewal.js';
+
+const resolveDefaultTerm = (): ContractTermMonths => {
+  const raw = process.env.SSA_DEFAULT_CONTRACT_TERM_MONTHS?.trim();
+  if (raw === undefined || raw === '') return DEFAULT_CONTRACT_TERM_MONTHS;
+  return parseContractTermMonths(raw) ?? DEFAULT_CONTRACT_TERM_MONTHS;
+};
 
 const CLOSED_WON_STAGE = 'closedwon';
 const SEARCH_PAGE_SIZE = 100;
@@ -86,50 +95,65 @@ const fetchClosedWonDeals = async (): Promise<DealRow[]> => {
 };
 
 export const syncDealRenewalDates = async (): Promise<void> => {
+  const defaultTerm = resolveDefaultTerm();
   const deals = await fetchClosedWonDeals();
   let updated = 0;
   let skipped = 0;
   let unchanged = 0;
+  let termDefaulted = 0;
 
   for (const deal of deals) {
-    const term = parseContractTermMonths(deal.contractTermMonths);
-    if (term === null) {
-      skipped += 1;
-      continue;
-    }
-
     const closeDate = parseHsDate(deal.closedate);
     if (closeDate === null) {
       await audit('syncDealRenewalDates.skip-no-closedate', deal.id, {
         dealname: deal.dealname,
-        contractTermMonths: term,
       });
       skipped += 1;
       continue;
+    }
+
+    let term = parseContractTermMonths(deal.contractTermMonths);
+    const appliedDefaultTerm = term === null;
+    if (term === null) {
+      term = defaultTerm;
+      termDefaulted += 1;
     }
 
     const expected = computeRenewalDate(closeDate, term);
     const expectedStr = formatHsDateOnly(expected);
     const stored = parseHsDate(deal.renewalDate);
+    const termOnDeal = parseContractTermMonths(deal.contractTermMonths);
+    const termMatches = termOnDeal === term;
+    const renewalMatches = stored !== null && hsDateOnlyEqual(stored, expected);
 
-    if (stored !== null && hsDateOnlyEqual(stored, expected)) {
+    if (termMatches && renewalMatches) {
       unchanged += 1;
       continue;
     }
 
+    const properties: Record<string, string> = { ss_renewal_date: expectedStr };
+    if (!termMatches) {
+      properties.ss_contract_term_months = String(term);
+    }
+
     try {
       await hsRetry(() =>
-        hs.crm.deals.basicApi.update(deal.id, {
-          properties: { ss_renewal_date: expectedStr },
-        }),
+        hs.crm.deals.basicApi.update(deal.id, { properties }),
       );
-      await audit('syncDealRenewalDates.updated', deal.id, {
-        dealname: deal.dealname,
-        contractTermMonths: term,
-        closedate: formatHsDateOnly(closeDate),
-        previousRenewalDate: stored === null ? null : formatHsDateOnly(stored),
-        ss_renewal_date: expectedStr,
-      });
+      await audit(
+        appliedDefaultTerm
+          ? 'syncDealRenewalDates.defaulted-term-and-renewal'
+          : 'syncDealRenewalDates.updated',
+        deal.id,
+        {
+          dealname: deal.dealname,
+          contractTermMonths: term,
+          appliedDefaultTerm,
+          closedate: formatHsDateOnly(closeDate),
+          previousRenewalDate: stored === null ? null : formatHsDateOnly(stored),
+          ss_renewal_date: expectedStr,
+        },
+      );
       updated += 1;
     } catch (err) {
       await audit('syncDealRenewalDates.failure', deal.id, {
@@ -145,5 +169,7 @@ export const syncDealRenewalDates = async (): Promise<void> => {
     updated,
     unchanged,
     skipped,
+    termDefaulted,
+    defaultTermMonths: defaultTerm,
   });
 };

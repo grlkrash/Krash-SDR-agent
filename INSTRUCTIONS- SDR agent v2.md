@@ -1489,15 +1489,9 @@ STOP.
 2. Closed-won deal with `closedate=2025-06-01`, `ss_contract_term_months=12` → `npx tsx src/scripts/syncDealRenewalDates.ts` → `ss_renewal_date=2026-06-01`.
 3. Set that renewal date 60d out (or adjust close/term) → `renewalWarnings` draft uses six-month / three-month / twelve-month language per term, not always "year ahead".
 
-**HubSpot workflow (recommended):** Step-by-step UI setup in `data/hubspot/RENEWAL_WORKFLOW.md` — enroll Closed Won deals and set `SS Contract Term (months)` (default 12). For same-day `ss_renewal_date` before the 9:45 AM cron, run `npx tsx src/scripts/syncDealRenewalDates.ts`.
+**No paid HubSpot workflows.** `syncDealRenewalDates` defaults missing `ss_contract_term_months` to 12 on every run. Operator guide: `data/hubspot/RENEWAL_OPERATOR.md`. Only manual step on close: set term to `3` or `6` when not a 12-month contract.
 
-**One-time backfill (existing closed-won):**
-
-```bash
-npx tsx src/scripts/backfillContractTerms.ts              # dry-run counts
-CONFIRM=yes npx tsx src/scripts/backfillContractTerms.ts  # default term 12 where missing
-npx tsx src/scripts/syncDealRenewalDates.ts
-```
+**One-time backfill (optional):** same as `backfillContractTerms.ts` + `syncDealRenewalDates.ts` if you have many legacy closed-won deals before the next cron.
 
 ---
 

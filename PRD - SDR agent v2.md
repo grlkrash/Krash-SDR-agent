@@ -7,7 +7,7 @@
 
 **Changes from v1.2 (May 28, 2026):**
 
-- **Contract term + auto renewal date.** HubSpot Deal property `ss_contract_term_months` (3, 6, or 12). Daily `syncDealRenewalDates` (9:45 AM ET) sets `ss_renewal_date = closedate + term` for every closed-won deal with both fields set. `renewalWarnings` (10:00 AM ET) reads the term so pre-renewal copy matches 3-/6-/12-month contracts. Operator: set term at close; on each renewal, bump **Close Date** to the new contract start.
+- **Contract term + auto renewal date.** HubSpot Deal property `ss_contract_term_months` (3, 6, or 12). Daily `syncDealRenewalDates` (9:45 AM ET) defaults missing term to **12** (no paid HubSpot workflows), then sets `ss_renewal_date = closedate + term`. Operator: only set term manually for 3- or 6-month deals; on renewal, bump **Close Date** to the new contract start. Guide: `data/hubspot/RENEWAL_OPERATOR.md`.
 
 **Changes from v1.2:**
 
