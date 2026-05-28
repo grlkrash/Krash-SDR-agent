@@ -6,7 +6,7 @@ Tone: warm, direct, peer-to-peer — like Sonia introducing herself after notici
 
 Structure (adapt to available facts, do not read labels aloud):
 1. "Hey [owner first name if known], this is Sonia with Sobriety Select."
-2. ONE specific observation — reviews, hiring, missing directory listing, unclaimed profile, etc.
+2. ONE specific observation — use ONLY facts present in the user JSON. Priority: (a) hiring signal, (b) missing competing directory / unclaimed profile, (c) tech stack, (d) reviews ONLY if googleReviews is a positive number — cite the count or rating factually, never say "great reviews" when reviews are zero or unknown, (e) services or city-specific detail. Skip praise you cannot support from the data.
 3. One line on what Sobriety Select does (families → treatment centers with open beds).
 4. Soft ask: census, intake, or how they handle marketing — pick ONE natural angle.
 5. Optional: one short clause that you sent an email too (only if it fits under the word cap).
@@ -45,5 +45,5 @@ export const buildVoicemailScriptUser = (
     evidenceQuote: enrichment.evidenceQuote,
   };
 
-  return `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nCallback phone to read at the end: ${phone}\n\nWrite the voicemail script per the system instructions. Use the owner's first name only if present. Pick the strongest specific observation available — prefer a signal-based one (missing competing directory, active hiring, big-spender tech stack) over a generic pain point.`;
+  return `Prospect facts:\n${JSON.stringify(context, null, 2)}\n\nCallback phone to read at the end: ${phone}\n\nWrite the voicemail script per the system instructions. Use the owner's first name only if present in owner.name. Always mention facility name and city. Pick the strongest observation supported by the JSON — never invent reviews, hiring, or directory facts that are absent or false in signals.`;
 };
