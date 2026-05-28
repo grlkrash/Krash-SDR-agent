@@ -2,6 +2,29 @@
 
 Generated files land here. **Do not commit real exports** — they may contain PII or counsel review notes.
 
+## Counsel briefing packet (PDF + HTML)
+
+TCPA research summary, program mechanics, open questions for counsel, and sign-off block.
+
+```bash
+npm run compliance:briefing
+```
+
+Default outputs:
+
+- `data/exports/counsel-briefing-YYYY-MM-DD.pdf`
+- `data/exports/counsel-briefing-YYYY-MM-DD.html`
+
+Custom path:
+
+```bash
+npm run compliance:briefing -- --output ./data/exports/counsel-briefing.pdf
+```
+
+Attach the state matrix PDF (below) and sample approved vm-1 / vm-2 scripts from `/queue`.
+
+---
+
 ## Voicemail eligibility matrix (PDF + HTML)
 
 State-by-state chart for automated vs manual voicemail drops. Includes counsel sign-off block.

@@ -15,6 +15,7 @@
     "exclusions:sync-directory": "tsx src/scripts/syncDirectoryExclusions.ts",
     "leads:export": "tsx src/scripts/exportLeads.ts",
     "compliance:matrix": "tsx src/scripts/exportVoicemailMatrix.ts",
+    "compliance:briefing": "tsx src/scripts/exportCounselBriefing.ts",
     "migrate": "prisma migrate dev",
     "test": "vitest run",
     "test:watch": "vitest",
