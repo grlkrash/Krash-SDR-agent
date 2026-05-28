@@ -1,4 +1,4 @@
-// Programmatic prep brief for the second-call live bridge.
+// Programmatic prep brief for live voicemail bridges (vm-1 and vm-2).
 //
 // Two outputs from the same lead + enrichment payload:
 //   - buildPrepBriefEmail: full markdown body Sonia receives ~0.5s before
@@ -6,13 +6,14 @@
 //     owner, signals, recent touches, pitch angle.
 //   - buildWhisperText: ~10 seconds of speech for Twilio's <Say> verb that
 //     plays in Sonia's ear AFTER she picks up but BEFORE the bridge connects.
-//     One-or-two sentences, the absolute essentials.
 //
 // Programmatic on purpose — no Claude call. The /twiml webhook responds to
 // Twilio within ~1 second; we can't afford an LLM round-trip in the critical
 // path. The lead + enrichment data is structured enough to template.
 
 import type { Enrichment, Lead, Prisma } from '@prisma/client';
+
+export type VoicemailBridgeKind = 'voicemail' | 'voicemail-2';
 
 const SIGNAL_KEYS_PRIORITY = [
   'hiring',
@@ -69,9 +70,40 @@ const summarizeAllSignals = (signals: Prisma.JsonValue): string => {
   return lines.length === 0 ? '_(no signals captured)_' : lines.join('\n');
 };
 
+const recentTouchesForKind = (kind: VoicemailBridgeKind): string[] => {
+  if (kind === 'voicemail-2') {
+    return [
+      '- Cold email sent earlier this week',
+      '- First voicemail dropped ~3 business days ago',
+    ];
+  }
+  return [
+    '- Cold email sent earlier this week',
+    '- First live connect — may be gatekeeper or owner',
+  ];
+};
+
+const pitchAngleForKind = (kind: VoicemailBridgeKind): string[] => {
+  if (kind === 'voicemail-2') {
+    return [
+      '## Pitch angle',
+      '- Open with the signal above (intake/census language, never "visibility")',
+      '- They got your voicemail — acknowledge it briefly, ask if they had a sec to listen',
+      '- Soft ask: 10-min walkthrough this week or next',
+    ];
+  }
+  return [
+    '## Pitch angle',
+    '- Open with the signal above (intake/census language, never "visibility")',
+    '- Brief intro: Sobriety Select connects families searching for treatment with centers that have open beds',
+    '- Soft ask: 10-min walkthrough this week or next',
+  ];
+};
+
 export const buildPrepBriefEmail = (
   lead: Lead,
   enrichment: Enrichment | null,
+  kind: VoicemailBridgeKind,
 ): { subject: string; body: string } => {
   const phoneDisplay = lead.phoneE164 === null ? '—' : formatPhoneForDisplay(lead.phoneE164);
   const ownerLine = enrichment === null || enrichment.ownerName === null
@@ -82,7 +114,8 @@ export const buildPrepBriefEmail = (
     ? '_(no enrichment)_'
     : summarizeAllSignals(enrichment.signals);
 
-  const subject = `📞 Live now: ${lead.name} (${lead.city}, ${lead.state})`;
+  const touchLabel = kind === 'voicemail-2' ? 'Second call' : 'First call';
+  const subject = `📞 Live now (${touchLabel}): ${lead.name} (${lead.city}, ${lead.state})`;
   const body = [
     `# ${lead.name}`,
     `**${lead.city}, ${lead.state}** · ${phoneDisplay}`,
@@ -99,13 +132,9 @@ export const buildPrepBriefEmail = (
     signalsBlock,
     '',
     '## Recent touches',
-    '- Cold email sent earlier this week',
-    '- First voicemail dropped ~3 business days ago',
+    ...recentTouchesForKind(kind),
     '',
-    '## Pitch angle',
-    '- Open with the signal above (intake/census language, never "visibility")',
-    '- They got your voicemail — acknowledge it briefly, ask if they had a sec to listen',
-    '- Soft ask: 10-min walkthrough this week or next',
+    ...pitchAngleForKind(kind),
     '',
     '## If receptionist / gatekeeper',
     '- Ask for owner by name if known above; otherwise "who handles marketing or partnerships?"',
@@ -118,9 +147,13 @@ export const buildPrepBriefEmail = (
 export const buildWhisperText = (
   lead: Lead,
   enrichment: Enrichment | null,
+  kind: VoicemailBridgeKind,
 ): string => {
   const owner = enrichment?.ownerName ?? 'the owner';
   const signal = enrichment === null ? null : summarizeOneSignal(enrichment.signals);
   const signalSentence = signal === null ? '' : `${signal}. `;
-  return `Connecting ${owner} from ${lead.name} in ${lead.city}. ${signalSentence}They got your voicemail Monday. Go.`;
+  if (kind === 'voicemail-2') {
+    return `Connecting ${owner} from ${lead.name} in ${lead.city}. ${signalSentence}They got your voicemail earlier this week. Go.`;
+  }
+  return `Connecting ${owner} from ${lead.name} in ${lead.city}. ${signalSentence}First live connect. Go.`;
 };

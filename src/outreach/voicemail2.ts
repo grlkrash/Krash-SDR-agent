@@ -6,10 +6,9 @@
 // have tombstoned as voicemail-skipped-mobile and runSecondCalls wouldn't
 // have surfaced this lead).
 //
-// The behavior split is on the SEND side, not the draft side: voicemail-2
-// drafts persist exactly like voicemail-1 (kind='voicemail-2',
-// status='pending', audioMp3 populated). The bridge-to-Sonia behavior
-// lives in the /webhook/twilio/twiml handler, which branches on draft.kind.
+// The behavior split is on the SEND side: vm-1 defers to after-hours locally;
+// vm-2 sends anytime. Both kinds bridge to Sonia on human pickup (see
+// twilioHooks.ts). Voicemail-2 skips isLandline — vm-1 already established landline.
 
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';

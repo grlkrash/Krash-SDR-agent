@@ -7,9 +7,9 @@
 //
 // 1. POST /webhook/twilio/twiml?draftId=... — Twilio hits this after AMD
 //    (Answering Machine Detection) completes. Machine → play pre-rendered MP3.
-//    Human on vm-1 → hang up. Human on vm-2 → bridge to Sonia (gatekeeper or
-//    owner — she handles live). This is NOT ringless voicemail; the callee's
-//    phone rings like a normal outbound call.
+//    Human on vm-1 or vm-2 → bridge to Sonia (gatekeeper or owner — she
+//    handles live) with prep brief + whisper. This is NOT ringless voicemail;
+//    the callee's phone rings like a normal outbound call.
 // 2. POST /webhook/twilio/status?draftId=... — call lifecycle status callback;
 //    we log the full body to AuditLog + write a HubSpot CALL engagement.
 // 3. GET /audio/:draftId — serves the raw MP3 buffer Twilio's <Play> verb
@@ -18,12 +18,14 @@
 import express from 'express';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
+import type { Enrichment, Lead } from '@prisma/client';
 import { z } from 'zod';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import { sendEmail } from '../shared/gmail.js';
 import {
   buildPrepBriefEmail,
   buildWhisperText,
+  type VoicemailBridgeKind,
 } from '../shared/prepBriefForCall.js';
 
 const CONNECTED = 'connected';
@@ -32,7 +34,9 @@ const HUBSPOT_CALL_DIRECTION = 'OUTBOUND';
 const MACHINE_END_BEEP = 'machine_end_beep';
 const CALL_STATUS_COMPLETED = 'completed';
 const BRIDGE_TIMEOUT_SECONDS = 20;
-const VOICEMAIL_2_KIND = 'voicemail-2';
+
+const isVoicemailBridgeKind = (kind: string): kind is VoicemailBridgeKind =>
+  kind === 'voicemail' || kind === 'voicemail-2';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -66,12 +70,10 @@ const parseDraftId = (raw: unknown): string | null => {
 const TwilioBody = z.record(z.string(), z.string());
 type TwilioBodyShape = z.infer<typeof TwilioBody>;
 
-const computeDisposition = (kind: string, answeredBy: string): string => {
+const computeDisposition = (answeredBy: string): string => {
   if (answeredBy === MACHINE_END_BEEP) return CONNECTED;
-  // Voicemail-2 + human answer = bridge attempted. The bridge's actual
-  // outcome (Sonia picked up vs missed) lives in the dial-result audit;
-  // HubSpot just sees "we connected with a human."
-  if (kind === VOICEMAIL_2_KIND && answeredBy === 'human') return CONNECTED;
+  // Human answer on vm-1 or vm-2 = bridge attempted. Outcome lives in dial-result.
+  if (answeredBy === 'human') return CONNECTED;
   return NO_ANSWER;
 };
 
@@ -90,7 +92,7 @@ const logHubspotCallEngagement = async (opts: {
       });
       return;
     }
-    const disposition = computeDisposition(opts.kind, opts.answeredBy);
+    const disposition = computeDisposition(opts.answeredBy);
     const created = await hsRetry(() =>
       hs.crm.objects.calls.basicApi.create({
         properties: {
@@ -137,18 +139,51 @@ const parseTwilioBody = (body: unknown): TwilioBodyShape => {
 
 const sendPrepBriefIfPossible = async (
   draftId: string,
+  kind: VoicemailBridgeKind,
   recipient: string,
   emailBody: { subject: string; body: string },
 ): Promise<void> => {
   try {
     await sendEmail({ to: recipient, subject: emailBody.subject, body: emailBody.body });
-    await audit('voicemail2.prep-brief-sent', draftId, { recipient });
+    await audit('voicemail.prep-brief-sent', draftId, { kind, recipient });
   } catch (err) {
-    await audit('voicemail2.prep-brief-failed', draftId, {
+    await audit('voicemail.prep-brief-failed', draftId, {
+      kind,
       recipient,
       error: err instanceof Error ? err.message : String(err),
     });
   }
+};
+
+const bridgeHumanToSonia = async (opts: {
+  draftId: string;
+  kind: VoicemailBridgeKind;
+  lead: Lead & { enrichment: Enrichment | null };
+  publicUrl: string;
+  res: express.Response;
+}): Promise<void> => {
+  const sonia = process.env.SONIA_PHONE ?? '';
+  const recipient = process.env.BRIEF_RECIPIENT ?? '';
+  if (sonia === '') {
+    await audit('voicemail.bridge-no-sonia-phone', opts.draftId, { kind: opts.kind });
+    opts.res.type('text/xml').send('<Response><Hangup/></Response>');
+    return;
+  }
+  if (recipient !== '') {
+    const emailBody = buildPrepBriefEmail(opts.lead, opts.lead.enrichment, opts.kind);
+    await sendPrepBriefIfPossible(opts.draftId, opts.kind, recipient, emailBody);
+  }
+
+  const whisperUrl = `${opts.publicUrl}/webhook/twilio/whisper?draftId=${escapeXml(opts.draftId)}`;
+  const dialResultUrl = `${opts.publicUrl}/webhook/twilio/dial-result?draftId=${escapeXml(opts.draftId)}`;
+  const twiml = `<Response><Dial timeout="${BRIDGE_TIMEOUT_SECONDS}" answerOnBridge="true" action="${dialResultUrl}"><Number url="${whisperUrl}">${escapeXml(sonia)}</Number></Dial></Response>`;
+
+  await audit('voicemail.bridge-initiated', opts.draftId, {
+    kind: opts.kind,
+    sonia,
+    recipient,
+  });
+  opts.res.type('text/xml').send(twiml);
 };
 
 twilioRouter.post('/webhook/twilio/twiml', async (req, res) => {
@@ -183,37 +218,19 @@ twilioRouter.post('/webhook/twilio/twiml', async (req, res) => {
     return;
   }
 
-  // Human answered. For voicemail-1 the spec is to hang up (we only run on
-  // landlines and the prospect picking up a business line is unexpected).
-  if (draft.kind !== VOICEMAIL_2_KIND) {
+  // Human answered on vm-1 or vm-2 → bridge to Sonia with prep brief + whisper.
+  if (!isVoicemailBridgeKind(draft.kind)) {
     res.type('text/xml').send('<Response><Hangup/></Response>');
     return;
   }
 
-  // Voicemail-2 + human pickup = the bridge case. Email Sonia the prep
-  // brief synchronously (Gmail send ~600ms, well under Twilio's 5s soft
-  // timeout), then return TwiML that dials Sonia with a whisper.
-  const sonia = process.env.SONIA_PHONE ?? '';
-  const recipient = process.env.BRIEF_RECIPIENT ?? '';
-  if (sonia === '') {
-    await audit('voicemail2.bridge-no-sonia-phone', draftId, {});
-    res.type('text/xml').send('<Response><Hangup/></Response>');
-    return;
-  }
-  if (recipient !== '') {
-    const emailBody = buildPrepBriefEmail(draft.lead, draft.lead.enrichment);
-    await sendPrepBriefIfPossible(draftId, recipient, emailBody);
-  }
-
-  const whisperUrl = `${publicUrl}/webhook/twilio/whisper?draftId=${escapeXml(draftId)}`;
-  const dialResultUrl = `${publicUrl}/webhook/twilio/dial-result?draftId=${escapeXml(draftId)}`;
-  const twiml = `<Response><Dial timeout="${BRIDGE_TIMEOUT_SECONDS}" answerOnBridge="true" action="${dialResultUrl}"><Number url="${whisperUrl}">${escapeXml(sonia)}</Number></Dial></Response>`;
-
-  await audit('voicemail2.bridge-initiated', draftId, {
-    sonia,
-    recipient,
+  await bridgeHumanToSonia({
+    draftId,
+    kind: draft.kind,
+    lead: draft.lead,
+    publicUrl,
+    res,
   });
-  res.type('text/xml').send(twiml);
 });
 
 // Played in SONIA's ear before the bridge connects. Twilio's built-in
@@ -227,14 +244,17 @@ twilioRouter.post('/webhook/twilio/whisper', async (req, res) => {
   }
   const draft = await prisma.draft.findUnique({
     where: { id: draftId },
-    select: { lead: { include: { enrichment: true } } },
+    select: { kind: true, lead: { include: { enrichment: true } } },
   });
   if (draft === null) {
     res.type('text/xml').send('<Response></Response>');
     return;
   }
-  const text = buildWhisperText(draft.lead, draft.lead.enrichment);
-  await audit('voicemail2.whisper-served', draftId, { whisperText: text });
+  const kind: VoicemailBridgeKind = isVoicemailBridgeKind(draft.kind)
+    ? draft.kind
+    : 'voicemail-2';
+  const text = buildWhisperText(draft.lead, draft.lead.enrichment, kind);
+  await audit('voicemail.whisper-served', draftId, { kind, whisperText: text });
   res.type('text/xml').send(`<Response><Say>${escapeXml(text)}</Say></Response>`);
 });
 
@@ -249,7 +269,7 @@ twilioRouter.post('/webhook/twilio/dial-result', async (req, res) => {
   const dialCallStatus = body.DialCallStatus ?? '';
 
   if (draftId !== null) {
-    await audit('voicemail2.dial-result', draftId, body);
+    await audit('voicemail.dial-result', draftId, body);
   }
 
   if (dialCallStatus === CALL_STATUS_COMPLETED) {
