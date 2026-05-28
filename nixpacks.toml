@@ -1,0 +1,13 @@
+# Force Node 22 LTS on Railway's Nixpacks builder.
+#
+# Why: Nixpacks's Node provider maps engines.node / .nvmrc to a nixpkgs
+# package by *major version only*. Our nixpkgs snapshot ships nodejs_20 at
+# 20.18.1, which fails Prisma 7.8's preinstall check (>=20.19, >=22.12, or
+# >=24.0). Declaring nodejs_22 here bypasses that resolution and pins us to
+# Node 22 LTS, which is in the supported range for every dep in the tree.
+#
+# If a future build picks an older 22.x patch and any dep tightens its
+# floor above it, switch to nodejs_24.
+
+[phases.setup]
+nixPkgs = ['nodejs_22', 'openssl']

@@ -230,6 +230,7 @@ These stay `enabled: false` in `src/shared/cronSchedule.ts` until their scripts 
 | `P1001` / `127.0.0.1:5432` / database `"build"` | **`DATABASE_URL` not set on the web service.** Add `${{Postgres.DATABASE_URL}}` → redeploy. |
 | `UndefinedVar: $NIXPACKS_PATH` | Railway/Nixpacks lint warning in generated Dockerfile — usually harmless if the build continues. |
 | Build succeeds but `/health` fails | Set runtime `DATABASE_URL`, run `CREATE EXTENSION vector`, check HubSpot/Claude keys. |
+| `EBADENGINE` / `Prisma only supports Node.js 20.19+, 22.12+, 24.0+` | Nixpacks picked an old 20.x patch. We pin `nodejs_22` via `nixpacks.toml`. If a build still picks 20.x, set `NIXPACKS_NODE_VERSION=22` in the service Variables tab. |
 | `ECONNREFUSED` on `auditLog` / cron | `DATABASE_URL` empty at runtime — use composite URL (§4), redeploy web + cron. |
 | `DATABASE_URL is missing or empty` in Deploy logs | Same — stale `${{Postgres.*}}` reference; delete and re-add on **both** services. |
 | `DATABASE_URL` empty after redeploy / reconnect Postgres | Delete the variable on **ssa-web** and **ssa-cron**, re-add via picker: `${{Postgres.DATABASE_URL}}`. Stale service references often resolve to `""`. Check **Deploy** logs for `[ssa-web] FATAL: DATABASE_URL is missing or empty`. |
