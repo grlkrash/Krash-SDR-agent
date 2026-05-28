@@ -19,7 +19,7 @@ import { hs, hsRetry } from '../shared/hubspot.js';
 import { sendEmail } from '../shared/gmail.js';
 import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
-import { twilio } from '../shared/twilio.js';
+import { isLandline, twilio } from '../shared/twilio.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import { isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
 
@@ -176,6 +176,23 @@ const dropVoicemailViaTwilio = async (
       phoneE164,
       state: lead.state,
       reason: eligibility.reason,
+    });
+    return;
+  }
+
+  // Re-check line type at send time (vm-1 and vm-2). Prerecorded voicemail to
+  // wireless without consent violates 47 U.S.C. § 227(b)(1)(A). Vm-2 skips the
+  // draft-time lookup; numbers can port or be misclassified between draft and send.
+  const landline = await isLandline(phoneE164);
+  if (!landline) {
+    await prisma.draft.update({
+      where: { id: draft.id },
+      data: { status: 'sent-suppressed' },
+    });
+    await audit('sender.voicemail-not-landline', draft.id, {
+      leadId: lead.id,
+      phoneE164,
+      kind: draft.kind,
     });
     return;
   }
