@@ -20,10 +20,37 @@ import {
   sanitizeEmailHtml,
 } from '../shared/emailHtml.js';
 import { logHubspotOutboundCall } from '../shared/logHubspotCall.js';
-import { MANUAL_VM_CALLED_STATUS } from '../outreach/brief/manualVm.js';
+import { countOpenManualVm, MANUAL_VM_CALLED_STATUS } from '../outreach/brief/manualVm.js';
+import { formatPhoneForDisplay } from '../outreach/brief/shared.js';
+import {
+  buildRenewalCallRows,
+  countOpenRenewalCalls,
+  type RenewalCallRow,
+} from '../outreach/renewalCallFlag.js';
 
 const VOICEMAIL_KINDS = new Set(['voicemail', 'voicemail-2']);
 const isVoicemailKind = (kind: string): boolean => VOICEMAIL_KINDS.has(kind);
+
+const POST_SALE_KINDS = new Set(['renewal', 'reactivation', 'quarterly', 'upsell']);
+const REPLY_KINDS = new Set(['replied', 'noshow']);
+
+type LaneMode = 'all' | 'post-sale' | 'sequence' | 'replies' | 'vm';
+
+const parseLaneMode = (raw: unknown): LaneMode => {
+  if (raw === 'post-sale' || raw === 'sequence' || raw === 'replies' || raw === 'vm') return raw;
+  return 'all';
+};
+
+const matchesLane = (kind: string, lane: LaneMode): boolean => {
+  if (lane === 'all') return true;
+  if (lane === 'post-sale') return POST_SALE_KINDS.has(kind);
+  if (lane === 'sequence') return kind === 'cold' || kind.startsWith('followup-');
+  if (lane === 'replies') return REPLY_KINDS.has(kind);
+  if (lane === 'vm') return isVoicemailKind(kind);
+  return true;
+};
+
+const RENEWALS_SECTION_LIMIT = 5;
 
 const PAGE_SIZE = 30;
 // We fetch a window larger than the page so sort=value can rank the full
@@ -182,6 +209,74 @@ const renderSiteLink = (lead: Lead): string => {
 // Cookie-based auth (per Security Prompt S.1) — no ?pw= on this URL. The
 // /prep-brief/lookup handler resolves the company → first associated deal
 // and redirects to /prep-brief/{dealId}.
+const renderPhoneLine = (lead: Lead, kind: string): string => {
+  if (!POST_SALE_KINDS.has(kind) && kind !== 'noshow') return '';
+  if (lead.phoneE164 === null) {
+    return '<div class="phone-line phone-missing">📞 No phone on file</div>';
+  }
+  const display = formatPhoneForDisplay(lead.phoneE164);
+  return `<div class="phone-line">📞 <a href="tel:${escapeHtml(lead.phoneE164)}">${escapeHtml(display)}</a></div>`;
+};
+
+const renderRenewalCallRow = (r: RenewalCallRow): string => {
+  const owner = r.ownerName ?? '—';
+  const touch = r.nextTouchNumber === null
+    ? `${String(r.touchesDone)}/5 touches`
+    : `Touch ${String(r.nextTouchNumber)}/5`;
+  return `
+  <div class="undo-row renewal-row">
+    <div class="undo-info">
+      <span class="lead-name-sm">${escapeHtml(r.facility)}</span>
+      <span class="undo-meta">${escapeHtml(r.city)}, ${escapeHtml(r.state)} · ${escapeHtml(touch)} · ${escapeHtml(owner)}</span>
+    </div>
+    <div class="undo-actions">
+      <a class="btn-undo" href="tel:${escapeHtml(r.phoneE164)}" style="text-decoration:none;display:inline-block">Call</a>
+      <a class="btn-undo" href="/renewals-call" style="text-decoration:none;display:inline-block;background:#1d4ed8">Open queue</a>
+    </div>
+  </div>`;
+};
+
+const renderTriageStrip = (counts: {
+  pending: number;
+  approved: number;
+  renewalsCall: number;
+  manualVm: number;
+  awaitingReply: number;
+  lane: LaneMode;
+}): string => {
+  const laneQs = (lane: LaneMode): string =>
+    lane === 'all' ? '/queue' : `/queue?lane=${encodeURIComponent(lane)}`;
+  const pill = (href: string, label: string, n: number, active: boolean): string =>
+    `<a class="triage-pill${active ? ' active' : ''}" href="${href}">${escapeHtml(label)} <span class="triage-n">${String(n)}</span></a>`;
+  return `
+  <nav class="triage" aria-label="Queue overview">
+    ${pill(laneQs('all'), 'Pending emails', counts.pending, counts.lane === 'all')}
+    ${pill('/renewals-call', 'Renewals to call', counts.renewalsCall, false)}
+    ${pill('/manual-vm-queue', 'Manual VM', counts.manualVm, false)}
+    ${pill(`${laneQs('all')}#awaiting-reply`, 'Awaiting reply', counts.awaitingReply, false)}
+    ${pill(laneQs('all'), 'Approved', counts.approved, false)}
+  </nav>`;
+};
+
+const renderLaneFilters = (lane: LaneMode, sortMode: 'newest' | 'value'): string => {
+  const lanes: Array<{ id: LaneMode; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'post-sale', label: 'Post-sale' },
+    { id: 'sequence', label: 'Sequence' },
+    { id: 'replies', label: 'Replies' },
+    { id: 'vm', label: 'Voicemail' },
+  ];
+  const items = lanes.map((l) => {
+    const qs = new URLSearchParams();
+    if (l.id !== 'all') qs.set('lane', l.id);
+    if (sortMode === 'value') qs.set('sort', 'value');
+    const href = qs.size === 0 ? '/queue' : `/queue?${qs.toString()}`;
+    const active = l.id === lane ? ' active' : '';
+    return `<a class="lane-pill${active}" href="${href}">${escapeHtml(l.label)}</a>`;
+  }).join('');
+  return `<div class="lane-filters" role="toolbar" aria-label="Filter pending by type">${items}</div>`;
+};
+
 const renderPrepBriefLink = (lead: Lead): string => {
   if (lead.hubspotCompanyId === null) return '';
   const href = `/prep-brief/lookup?companyId=${encodeURIComponent(lead.hubspotCompanyId)}`;
@@ -201,6 +296,12 @@ const renderKindBadge = (kind: string): string => {
   }
   if (kind === 'nudge') {
     return `<span class="badge solid kind-nudge" title="Manual-style check-in after long silence — not a template sequence touch">Nudge</span>`;
+  }
+  if (kind === 'renewal') {
+    return `<span class="badge solid kind-renewal" title="60-day pre-renewal — live call after send">Renewal</span>`;
+  }
+  if (kind === 'reactivation') {
+    return `<span class="badge solid kind-reactivation" title="Win-back for stale open deal">Reactivation</span>`;
   }
   return `<span class="badge gray">${escapeHtml(kind)}</span>`;
 };
@@ -245,6 +346,7 @@ const renderHeader = (d: DraftWithRel): string => {
       <div class="meta">${escapeHtml(d.lead.city)}, ${escapeHtml(d.lead.state)}${renderSiteLink(d.lead)}</div>
     </div>
     <div class="owner">${renderOwnerLine(enr)}${renderPrepBriefLink(d.lead)}</div>
+    ${renderPhoneLine(d.lead, d.kind)}
     ${renderSendToLine(enr, d.lead)}
     ${painsHtml}
     ${signalsHtml}
@@ -542,6 +644,22 @@ const STYLE = `
   .seq-badge { background: #0d9488; }
   .kind-cold { background: #6366f1; }
   .kind-nudge { background: #8b5cf6; }
+  .kind-renewal { background: #b45309; }
+  .kind-reactivation { background: #7c3aed; }
+  .phone-line { font-size: 14px; margin-top: 6px; font-weight: 500; }
+  .phone-missing { color: #b45309; font-weight: 400; }
+  .triage { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+  .triage-pill { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px;
+    background: white; border: 1px solid #e5e7eb; color: #1f2937; font-size: 13px; font-weight: 600; text-decoration: none; }
+  .triage-pill:hover { border-color: #93c5fd; background: #f8fafc; }
+  .triage-pill.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; }
+  .triage-n { background: #e5e7eb; color: #374151; font-size: 12px; padding: 1px 7px; border-radius: 10px; }
+  .triage-pill.active .triage-n { background: #dbeafe; color: #1e40af; }
+  .lane-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+  .lane-pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid #d4d4d8;
+    background: white; color: #374151; text-decoration: none; font-weight: 500; }
+  .lane-pill.active { background: #111827; color: white; border-color: #111827; }
+  .renewal-row { border-color: #fdba74; background: #fffbeb; }
   .draft-form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
   .draft-form input[type=text] { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 14px; padding: 8px; border: 1px solid #d4d4d8; border-radius: 6px; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -680,17 +798,26 @@ const renderPage = (
   approved: DraftWithRel[],
   awaitingReply: AwaitingReplyLead[],
   pausedRejected: DraftWithRel[],
+  renewalCalls: RenewalCallRow[],
   totalPending: number,
+  totalPendingLane: number,
   totalApproved: number,
   totalAwaitingReply: number,
   totalPausedRejected: number,
+  openRenewalsCall: number,
+  openManualVm: number,
   sortMode: 'newest' | 'value',
+  laneMode: LaneMode,
 ): string => {
   const newestSel = sortMode === 'newest' ? ' selected' : '';
   const valueSel = sortMode === 'value' ? ' selected' : '';
+  const laneHidden = laneMode === 'all' ? '' : `<input type="hidden" name="lane" value="${escapeHtml(laneMode)}" />`;
+  const pendingLabel = laneMode === 'all'
+    ? 'Pending review'
+    : `Pending — ${laneMode}`;
   const pendingCards =
     pending.length === 0
-      ? '<div class="section-empty">No pending drafts. Nice work.</div>'
+      ? `<div class="section-empty">No pending drafts${laneMode === 'all' ? '' : ` in “${laneMode}”`}. Nice work.</div>`
       : pending.map((d) => renderPendingCard(d)).join('\n');
   const approvedCards =
     approved.length === 0
@@ -724,6 +851,15 @@ const renderPage = (
     totalPausedRejected > 0
       ? ` · <a href="#undo-zone">${totalPausedRejected} to undo ↓</a>`
       : '';
+  const renewalsSection =
+    openRenewalsCall === 0
+      ? ''
+      : `
+  <section class="queue-section" id="renewals-call">
+    <h2 class="section-title">📞 Renewals to call <span class="count">(${openRenewalsCall})</span>
+      <a href="/renewals-call" style="font-size:13px;font-weight:500;margin-left:8px">Full queue →</a></h2>
+    ${renewalCalls.map((r) => renderRenewalCallRow(r)).join('\n')}
+  </section>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -735,11 +871,21 @@ const renderPage = (
 </head>
 <body>
   <h1>Approval Queue</h1>
-  <div class="top-meta">${totalPending} pending · ${totalApproved} approved &amp; ready to send${awaitingReplyMeta}${undoMeta}</div>
+  ${renderTriageStrip({
+    pending: totalPending,
+    approved: totalApproved,
+    renewalsCall: openRenewalsCall,
+    manualVm: openManualVm,
+    awaitingReply: totalAwaitingReply,
+    lane: laneMode,
+  })}
+  <div class="top-meta">${totalPendingLane} shown · ${totalApproved} approved &amp; ready to send${awaitingReplyMeta}${undoMeta}</div>
   <div class="toolbar">
     <a href="/copilot" style="font-size:14px;margin-right:12px;">Sales co-pilot →</a>
+    <a href="/renewals-call" style="font-size:14px;margin-right:12px;">Renewals to call →</a>
     <a href="/manual-vm-queue" style="font-size:14px;margin-right:12px;">Manual VM queue →</a>
     <form method="get" action="/queue">
+      ${laneHidden}
       <label for="sort">Sort pending:</label>
       <select id="sort" name="sort" onchange="this.form.submit()">
         <option value="newest"${newestSel}>Newest</option>
@@ -752,8 +898,10 @@ const renderPage = (
     </button>
     <span id="approve-all-status" class="approve-status"></span>
   </div>
+  ${renewalsSection}
   <section class="queue-section">
-    <h2 class="section-title">📋 Pending review <span class="count">(${totalPending})</span></h2>
+    <h2 class="section-title">📋 ${escapeHtml(pendingLabel)} <span class="count">(${totalPendingLane}${laneMode === 'all' ? '' : ` of ${totalPending}`})</span></h2>
+    ${renderLaneFilters(laneMode, sortMode)}
     ${pendingCards}
   </section>
   <section class="queue-section">
@@ -778,6 +926,7 @@ queueRouter.use(express.urlencoded({ extended: false }));
 
 queueRouter.get('/queue', queueAuth, async (req, res) => {
   const sortMode: 'newest' | 'value' = req.query.sort === 'value' ? 'value' : 'newest';
+  const laneMode = parseLaneMode(req.query.lane);
   // Awaiting-reply window: any lead whose most-recent activity is a sent
   // draft >= REPLY_SILENCE_DAYS old, with no active successor (pending /
   // approved / paused) AND no recent nudge inside the same window. Once
@@ -799,6 +948,8 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
     totalApproved,
     totalPausedRejected,
     totalAwaitingReply,
+    openRenewalsCall,
+    openManualVm,
   ] = await Promise.all([
     prisma.draft.findMany({
       where: { status: 'pending' },
@@ -835,17 +986,21 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
     prisma.draft.count({ where: { status: 'approved' } }),
     prisma.draft.count({ where: { status: { in: ['paused', 'rejected'] } } }),
     prisma.lead.count({ where: awaitingWhere }),
+    countOpenRenewalCalls(),
+    countOpenManualVm(),
   ]);
+  const renewalCallRows = await buildRenewalCallRows({ limit: RENEWALS_SECTION_LIMIT });
   const orderedPending =
     sortMode === 'value'
       ? [...pendingRows].sort((a, b) => commissionForDraft(b) - commissionForDraft(a))
       : pendingRows;
+  const laneFilteredPending = orderedPending.filter((d) => matchesLane(d.kind, laneMode));
   // Oldest silence first — the lead that's been waiting longest is the most
   // urgent nudge candidate. Defensive: sentAt is nullable in the schema even
   // though status='sent' filter implies it's set.
   const sentAtMs = (l: AwaitingReplyLead): number => l.drafts[0]?.sentAt?.getTime() ?? 0;
   const orderedAwaitingReply = [...awaitingReplyRows].sort((a, b) => sentAtMs(a) - sentAtMs(b));
-  const visiblePending = orderedPending.slice(0, PAGE_SIZE);
+  const visiblePending = laneFilteredPending.slice(0, PAGE_SIZE);
   const visibleApproved = approvedRows.slice(0, PAGE_SIZE);
   const visiblePausedRejected = pausedRejectedRows.slice(0, PAGE_SIZE);
   const visibleAwaitingReply = orderedAwaitingReply.slice(0, PAGE_SIZE);
@@ -857,11 +1012,16 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
         visibleApproved,
         visibleAwaitingReply,
         visiblePausedRejected,
+        renewalCallRows,
         totalPending,
+        laneFilteredPending.length,
         totalApproved,
         totalAwaitingReply,
         totalPausedRejected,
+        openRenewalsCall,
+        openManualVm,
         sortMode,
+        laneMode,
       ),
     );
 });
