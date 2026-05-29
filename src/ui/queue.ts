@@ -11,6 +11,7 @@ import {
   awaitingReplyLeadWhere,
   awaitingReplySilenceCutoff,
 } from '../shared/awaitingReply.js';
+import { guessEmail } from '../shared/guessEmail.js';
 
 const PAGE_SIZE = 30;
 // We fetch a window larger than the page so sort=value can rank the full
@@ -176,6 +177,35 @@ const renderPrepBriefLink = (lead: Lead): string => {
   return `<a href="${href}" target="_blank" style="font-size:12px;color:#666;text-decoration:none;margin-left:8px">📋 Prep Brief</a>`;
 };
 
+const SEQUENCE_MAX_STEP = 5;
+
+const renderKindBadge = (kind: string): string => {
+  const followupMatch = /^followup-(\d)$/.exec(kind);
+  if (followupMatch !== null) {
+    const step = followupMatch[1];
+    return `<span class="badge solid seq-badge" title="Sequence follow-up touch ${step} of ${SEQUENCE_MAX_STEP} — threads under the original cold email">↩ Follow-up ${step}/${SEQUENCE_MAX_STEP}</span>`;
+  }
+  if (kind === 'cold') {
+    return `<span class="badge solid kind-cold" title="First touch in the 5-step sequence">Touch 1/${SEQUENCE_MAX_STEP} · Cold</span>`;
+  }
+  if (kind === 'nudge') {
+    return `<span class="badge solid kind-nudge" title="Manual-style check-in after long silence — not a template sequence touch">Nudge</span>`;
+  }
+  return `<span class="badge gray">${escapeHtml(kind)}</span>`;
+};
+
+const renderSendToLine = (enr: Enrichment | null, lead: Lead): string => {
+  const verified = enr?.ownerEmail?.trim() ?? '';
+  const target = verified !== '' ? verified : guessEmail(enr?.ownerName ?? null, lead.website);
+  if (target === null) {
+    return '<div class="send-to send-to-warn">⚠ No send address — will suppress on send</div>';
+  }
+  if (verified !== '') {
+    return `<div class="send-to">Send to: ${escapeHtml(target)}</div>`;
+  }
+  return `<div class="send-to send-to-warn">Send to: ${escapeHtml(target)} <span class="dim">(guessed — verify before approving)</span></div>`;
+};
+
 const renderHeader = (d: DraftWithRel): string => {
   const enr = d.lead.enrichment;
   const tier = safeTier(enr?.expectedProduct ?? null);
@@ -204,12 +234,13 @@ const renderHeader = (d: DraftWithRel): string => {
       <div class="meta">${escapeHtml(d.lead.city)}, ${escapeHtml(d.lead.state)}${renderSiteLink(d.lead)}</div>
     </div>
     <div class="owner">${renderOwnerLine(enr)}${renderPrepBriefLink(d.lead)}</div>
+    ${renderSendToLine(enr, d.lead)}
     ${painsHtml}
     ${signalsHtml}
     <div class="badges">
       <span class="badge solid" style="background:${TIER_BG[tier]}">${escapeHtml(TIER_LABEL[tier])}</span>
       <span class="badge solid" style="background:${personalizationBg(pct)}">${escapeHtml(pctLabel)}</span>
-      <span class="badge gray">${escapeHtml(d.kind)}</span>
+      ${renderKindBadge(d.kind)}
     </div>`;
 };
 
@@ -423,12 +454,17 @@ const STYLE = `
   .lead-name { font-weight: 600; font-size: 16px; }
   .meta { color: #6b7280; font-size: 13px; }
   .owner { color: #374151; font-size: 14px; margin-top: 4px; }
+  .send-to { font-size: 13px; margin-top: 6px; color: #374151; }
+  .send-to-warn { color: #b45309; }
   .dim { color: #9ca3af; }
   .pains, .badges { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
   .signals { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: #374151; }
   .badge { display: inline-block; font-size: 12px; padding: 3px 8px; border-radius: 12px; line-height: 1.4; }
   .badge.gray { background: #e5e7eb; color: #374151; }
   .badge.solid { color: white; }
+  .seq-badge { background: #0d9488; }
+  .kind-cold { background: #6366f1; }
+  .kind-nudge { background: #8b5cf6; }
   .draft-form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
   .draft-form input[type=text], .draft-form textarea { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 14px; padding: 8px; border: 1px solid #d4d4d8; border-radius: 6px; }
   .draft-form textarea { resize: vertical; line-height: 1.45; }

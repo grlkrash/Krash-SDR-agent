@@ -3,7 +3,7 @@
 // Cron entry (7:00 AM ET): batch-draft approval-gated nudges for leads in the
 // "awaiting reply" state (10+ days since last send, no open queue work).
 // Same eligibility as /queue's awaiting-reply section; runs before
-// runSequences (7:30) which auto-sends template touches 2–5.
+// runSequences (7:30) which drafts template touches 2–5 into /queue.
 
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -67,8 +67,18 @@ for (const lead of ordered) {
 
   const state = await getSequenceState(lead.id);
   if (state?.status === 'replied') continue;
-  // Defer to runSequences when an auto touch is due now — avoids double outreach.
+  // Defer to runSequences when a template follow-up touch is due — avoids double outreach.
   if (state?.status === 'active' && state.nextSendAt <= new Date()) continue;
+
+  const queuedFollowup = await prisma.draft.findFirst({
+    where: {
+      leadId: lead.id,
+      kind: { startsWith: 'followup-' },
+      status: { in: ['pending', 'approved'] },
+    },
+    select: { id: true },
+  });
+  if (queuedFollowup !== null) continue;
 
   eligible.push(lead.id);
 }

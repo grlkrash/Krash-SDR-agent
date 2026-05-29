@@ -1,12 +1,10 @@
 // tsx src/scripts/runSequences.ts
 //
-// Cron entry: advance every eligible follow-up sequence by at most one step.
+// Cron entry: draft approval-gated follow-up touches 2–5 for eligible leads.
 // Eligibility = a cold draft was sent more than 3 days ago AND no 'replied'
 // draft exists for that lead. The sequencer itself enforces the per-step
-// cadence (3/4/7/16 business days) — this query just filters out leads that
-// can't possibly be due yet, so we don't waste DB roundtrips. 500ms pacing
-// keeps Gmail send quota and HubSpot engagement-create rate limits headroom.
-// Capped at 100 leads per run; backlog drains across cron ticks.
+// cadence (3/4/7/16 business days). Pending drafts surface in /queue for
+// Sonia to approve; sendApproved sends after approval.
 
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';

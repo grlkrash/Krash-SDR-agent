@@ -254,6 +254,15 @@ const dropVoicemailViaTwilio = async (
   });
 };
 
+const getColdThreadAnchor = async (leadId: string): Promise<string | undefined> => {
+  const cold = await prisma.draft.findFirst({
+    where: { leadId, kind: 'cold', status: { in: ['sent', 'auto-sent'] } },
+    orderBy: { sentAt: 'asc' },
+    select: { gmailMessageId: true },
+  });
+  return cold?.gmailMessageId ?? undefined;
+};
+
 export const sendApprovedDraft = async (draftId: string): Promise<void> => {
   const draft = await prisma.draft.findUnique({
     where: { id: draftId },
@@ -312,10 +321,21 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
   }
 
   const subject = draft.subject ?? '';
+  let inReplyTo: string | undefined;
+  let references: string | undefined;
+  if (draft.kind.startsWith('followup-')) {
+    const anchor = await getColdThreadAnchor(lead.id);
+    if (anchor !== undefined) {
+      inReplyTo = anchor;
+      references = anchor;
+    }
+  }
   const gmailMessageId = await sendEmail({
     to: targetEmail,
     subject,
     body: draft.body,
+    inReplyTo,
+    references,
   });
 
   const sentAt = new Date();
