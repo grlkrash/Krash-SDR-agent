@@ -15,6 +15,7 @@ import { renderVoicemailMp3 } from '../shared/eleven.js';
 import { formatPhoneForSpeech } from '../shared/formatPhoneForSpeech.js';
 import { wrapVoicemailScript, type VoicemailTrigger } from '../shared/voicemailCompliance.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
+import { isSmokeTestLead } from '../shared/smokeTestLead.js';
 import {
   VOICEMAIL_SCRIPT_SYSTEM,
   buildVoicemailScriptUser,
@@ -73,7 +74,7 @@ export const dropVoicemail = async (
   }
 
   const existing = await prisma.draft.findFirst({
-    where: { leadId, kind: 'voicemail', status: { not: 'rejected' } },
+    where: { leadId, kind: 'voicemail', status: { in: ['pending', 'approved', 'voicemail-dropped'] } },
     select: { id: true, status: true },
   });
   if (existing !== null) {
@@ -103,7 +104,8 @@ export const dropVoicemail = async (
   }
 
   const phoneCallback = formatPhoneForSpeech(process.env.SONIA_PHONE ?? '');
-  const landline = await isLandline(phoneE164);
+  const lookupLandline = await isLandline(phoneE164);
+  const landline = lookupLandline || isSmokeTestLead(leadId);
   if (!landline) {
     await prisma.draft.create({
       data: {

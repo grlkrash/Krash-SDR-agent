@@ -15,6 +15,7 @@ import { dropVoicemail, type VoicemailTrigger } from '../outreach/voicemail.js';
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const DAILY_CAP = 50;
 const PACING_MS = 1_000;
+const VM_BLOCKING_STATUSES = ['pending', 'approved', 'voicemail-dropped', 'manual-vm-called'] as const;
 const CONSENT_TRIGGER_KINDS = ['reactivation'] as const;
 
 const prisma = new PrismaClient({
@@ -56,7 +57,7 @@ const main = async (): Promise<void> => {
             status: { in: ['sent', 'auto-sent'] },
             sentAt: { gte: cutoff },
           },
-          none: { kind: 'voicemail' },
+          none: { kind: 'voicemail', status: { in: [...VM_BLOCKING_STATUSES] } },
         },
       },
       select: { id: true },
