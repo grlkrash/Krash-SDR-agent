@@ -1,9 +1,20 @@
 # PRD — Sobriety Select SDR Agent (SSA)
 
-**Version:** 1.5
+**Version:** 1.7
 **Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
-**Last Updated:** May 28, 2026
+**Last Updated:** May 29, 2026
+
+**Changes from v1.6 (May 29, 2026):**
+
+- **Engagement dashboard on `/queue` (§9.5).** Aggregate **open rate** and **reply rate** (all-time) displayed at the top of the approval queue, with an expandable breakdown by email type (cold, follow-up 1–4, nudge, reactivation, renewal, etc.). Per-lead **temperature badges** (Hot / Warm / Cool / Cold) on draft cards and awaiting-reply rows link to a lead-level engagement detail page with send history and a suggested approach hint. JSON API at `GET /queue/engagement-stats` for programmatic access. Reply rate is sourced from `AuditLog 'reply.draft-created'` (`meta.matchedDraftId` / `meta.matchedDraftKind`); open rate uses HubSpot email `hs_email_open_count` on `Draft.hubspotEmailId` plus contact `hs_email_last_open_date` within 30 days of send (Gmail sends may under-report — see §9.5). Stats cached 5 minutes in-process.
+
+**Changes from v1.5 (May 29, 2026):**
+
+- **Renewal vs reactivation post-sale split (§9.9, §9.10).** **Renewals** (`kind='renewal'`) are **live-call only** — no AI voicemail. When a renewal email sends, SSA flags the lead for Sonia: HubSpot tasks (touch 1 due **3 business days** after send), up to **5 call touches on BD 3–7**, `/renewals-call` operator queue, compact section on `/queue`, and a **5 PM brief** section. **`renewalCallFollowups`** (8:00 AM ET) creates due touch tasks and expires sequences after BD 7. **Reactivations** (`kind='reactivation'`) remain email + optional **consent-gated machine-only AI vm** (see below). Cold-prospect vm is off.
+- **Consent-gated reactivation VM (§9.9).** `dropVoicemails` triggers only after a **sent reactivation** email and `Lead.priorWrittenConsent=true` (PEWC click-through on `/consent-phone` appended to renewal/reactivation emails). Twilio AMD: **machine → play MP3** with deterministic artificial-voice disclosures; **human → hang up** (no live bridge). Auto-send requires `VM_AI_AUTO_SEND=true` on web + cron; reactivation vm drafts auto-approve when that flag is set. Operator smoke test: `SMOKE_TEST_LEAD_ID` bypasses landline at draft + send time; `seedSmokeTestPostSaleQueue.ts` seeds queue fixtures.
+- **Approval queue triage (§9.5).** `/queue` gains a top **triage strip** (counts + deep links), **lane filters** on pending (All / Post-sale / Sequence / Replies / Voicemail), **phone line** on post-sale cards, and a **Renewals to call** preview linking to `/renewals-call`. `/manual-vm-queue` unchanged for state-law restricted leads.
+- **Inbound compliance (§12).** STOP/unsubscribe replies auto-suppress; inbound Twilio calls forward to `SONIA_PHONE`.
 
 **Changes from v1.4 (May 28, 2026):**
 
@@ -58,7 +69,10 @@ Build a single Node.js/TypeScript service that automates 80% of the SDR workflow
 1. Sonia reviews batches of 10–20 items in 60-second decisions: **send / edit / kill**.
 1. Approved items go out. Killed items train the prompt.
 
-No AI ever sends an email or makes a phone call without Sonia’s explicit approval, with the **single exception** of automated no-reply follow-up touches 2–5 in a pre-approved sequence.
+No AI ever sends an email or makes a phone call without Sonia’s explicit approval, with these **exceptions**:
+
+1. Automated no-reply follow-up touches 2–5 in a pre-approved sequence.
+2. **Reactivation AI voicemail** — only when `VM_AI_AUTO_SEND=true` (counsel-approved), `Lead.priorWrittenConsent=true`, a sent **reactivation** email exists, and Twilio AMD detects a **machine** (human answers are hung up, not bridged).
 
 -----
 
@@ -76,6 +90,7 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 |Replied / booked / no-show follow-ups|AI drafts, Sonia sends           |Relationship signal         |
 |Lost-deal nurture                    |100%                             |Long horizon, low risk      |
 |Cold deal reactivation flagging      |100% flag, AI drafts, Sonia sends|Salvage                     |
+|Reactivation AI vm (machine-only)    |100% when PEWC + `VM_AI_AUTO_SEND`|Post-consent salvage touch  |
 |Daily pipeline scoring + brief       |100%                             |Morning briefing            |
 |**Discovery calls**                  |**0%**                           |**Sonia’s competitive moat**|
 |**Discovery call prep brief**        |**100% (generated on demand)**   |**5-min pre-call read**     |
@@ -83,7 +98,8 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 |Live objection email responses       |0%                               |Relationship                |
 |Closed-won onboarding                |100% drafted, Sonia approves     |Set tone                    |
 |Quarterly client check-ins           |100% drafted, Sonia approves     |Renewal pipeline            |
-|Renewal early-warning                |100% flag, AI drafts             |Money on the table          |
+|Renewal early-warning email          |100% flag, AI drafts, Sonia sends|Money on the table          |
+|**Renewal live-call cadence**        |**100% flag + HubSpot tasks**    |**Live calls — no AI vm**   |
 |Upsell trigger detection             |100% flag, Sonia decides         |Strategic                   |
 |Post-sale FAQ replies                |100% drafted, Sonia approves     |Time saved                  |
 
@@ -212,12 +228,18 @@ sobriety-select-sdr/
 │   │   ├── replyWatcher.ts
 │   │   ├── quarterlyCheckin.ts
 │   │   ├── renewalWarning.ts
+│   │   ├── renewalCallFlag.ts   # v1.6: renewal live-call cadence + HubSpot tasks
 │   │   ├── reactivation.ts
 │   │   ├── voicemail.ts
 │   │   ├── prepBrief.ts         # NEW: discovery call prep
 │   │   ├── dailyBrief.ts
+│   │   ├── emailEngagementStats.ts  # v1.7: open/reply rates for /queue dashboard
 │   │   └── sender.ts
 │   ├── shared/
+│   │   ├── renewalCallTouches.ts
+│   │   ├── hubspotTask.ts
+│   │   ├── smokeTestLead.ts
+│   │   ├── voicemailCompliance.ts
 │   │   ├── lead.ts
 │   │   ├── claude.ts
 │   │   ├── hubspot.ts
@@ -245,11 +267,15 @@ sobriety-select-sdr/
 │   │   └── dailyBrief.ts
 │   ├── ui/
 │   │   ├── queue.ts
+│   │   ├── engagementDashboard.ts   # v1.7: engagement panel + lead detail HTML
+│   │   ├── renewalsCall.ts      # v1.6: /renewals-call live renewal queue
+│   │   ├── manualVmQueue.ts
 │   │   ├── copilot.ts
 │   │   └── prepBrief.ts         # NEW: /prep-brief/:dealId route
 │   ├── routes/
 │   │   ├── unsubscribe.ts
-│   │   └── twilioHooks.ts
+│   │   ├── phoneConsent.ts      # v1.6: GET /consent-phone PEWC opt-in
+│   │   └── twilioHooks.ts       # AMD twiml, inbound forward, audio serve
 │   ├── middleware/
 │   │   └── queueAuth.ts
 │   ├── scripts/
@@ -259,7 +285,7 @@ sobriety-select-sdr/
 
 -----
 
-## 8. Data Model (6 tables — unchanged from v1.1)
+## 8. Data Model (6 tables — additive v1.6 columns on Lead)
 
 ```prisma
 model Lead {
@@ -280,6 +306,8 @@ model Lead {
   sourceMeta        Json
   hubspotCompanyId  String?
   doNotContact      Boolean  @default(false)
+  priorWrittenConsent   Boolean   @default(false)  // v1.6: PEWC opt-in via /consent-phone
+  priorWrittenConsentAt DateTime?
   enrichment        Enrichment?
   drafts            Draft[]
   createdAt         DateTime @default(now())
@@ -350,12 +378,14 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 |`0 6 * * *`   |6:00 AM  |`scorePipeline`       |pipeline|
 |`30 6 * * *`  |6:30 AM  |`draftColdBatch`      |outreach|
 |`0 7 * * *`   |7:00 AM  |`draftFollowups`      |outreach|
+|`15 7 * * *`  |7:15 AM  |`runSecondCalls`      |outreach|
 |`30 7 * * *`  |7:30 AM  |`runSequences`        |outreach|
+|`0 8 * * *`   |8:00 AM  |`renewalCallFollowups`|outreach|
 |`0 8 * * *`   |8:00 AM  |`draftUpsellBatch`    |outreach|
 |`0 9 * * *`   |9:00 AM  |`quarterlyCheckins`   |outreach|
 |`45 9 * * *`  |9:45 AM  |`syncDealRenewalDates`|pipeline|
 |`0 10 * * *`  |10:00 AM |`renewalWarnings`     |outreach|
-|`0 14 * * *`  |2:00 PM  |`dropVoicemails`      |outreach|
+|`0 14 * * *`  |2:00 PM  |`dropVoicemails`      |outreach (reactivation + PEWC only)|
 |`*/5 * * * *` |~5 min   |`checkReplies`        |outreach|
 |`*/10 * * * *`|10 min   |`sendApproved`        |outreach|
 |`0 17 * * *`  |5:00 PM  |`sendDailyBrief`      |outreach|
@@ -365,7 +395,7 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 
 Prep briefs are **generated on demand** via `GET /prep-brief/:dealId` — no cron needed. Sonia hits it 5 minutes before each call.
 
-**Railway deployment:** One always-on web service plus one cron service on `*/5 * * * *` UTC running `cronTick.ts`, which dispatches PRD jobs by Eastern time. See `RAILWAY.md`. `draftFollowups` (7:00 AM ET) batch-drafts approval-gated `kind='nudge'` emails for leads in the awaiting-reply state (same rules as `/queue` §9.5); `runSequences` (7:30 AM) auto-sends template touches 2–5. `dropVoicemails` stays disabled until implemented.
+**Railway deployment:** One always-on web service plus one cron service on `*/5 * * * *` UTC running `cronTick.ts`, which dispatches PRD jobs by Eastern time. See `RAILWAY.md`. `draftFollowups` (7:00 AM ET) batch-drafts approval-gated `kind='nudge'` emails for leads in the awaiting-reply state (same rules as `/queue` §9.5); `runSequences` (7:30 AM) auto-sends template touches 2–5. `dropVoicemails` (2:00 PM) drafts consent-gated vm-1 for **reactivation only**; renewals route to `/renewals-call` (§9.10).
 
 ### 9.2 Lead Sourcing (pipeline)
 
@@ -438,6 +468,56 @@ Same as v1.1, plus:
 - **Kill lead button (v1.2 addition).** Each pending, approved, and paused/rejected draft card carries a red `Kill lead` button next to Pause. Two-step confirm in the browser (consequences confirm + optional reason prompt), then `POST /kill-lead/:leadId` delegates to `src/outreach/killLead.ts`. That helper: (a) sets `Lead.doNotContact = true`, (b) `prisma.suppression.upsert` on the lead's known email + phone (composite-PK row, reason `kill-lead: <text>`), (c) `updateMany` flips all `pending|approved|paused` drafts for the lead to `rejected` with `rejectReason = 'Lead killed: <text>'`, (d) best-effort updates the HubSpot contact's native `hs_lead_status` to `UNQUALIFIED` (HubSpot's default enum has no `DO_NOT_CONTACT` value — confirmed against the 8 defaults: NEW, OPEN, IN_PROGRESS, OPEN_DEAL, UNQUALIFIED, ATTEMPTED_TO_CONTACT, CONNECTED, BAD_TIMING. If Sonia later adds a custom enum value to `hs_lead_status` in Settings > Data Management > Properties, swap the constant `HUBSPOT_LEAD_STATUS_UNQUALIFIED` in `killLead.ts` to match). HubSpot failures are non-fatal and surface as a separate `AuditLog 'killLead.hubspot-failed'`. The kill itself writes `AuditLog 'lead.killed'` with `{ reason, cancelledDrafts, suppressedEmail, suppressedPhone, hubspotContactId, hubspotError, killedBy }`. Idempotent — re-killing an already-killed lead is a no-op DB-side and a fresh `hs_lead_status` write on the HubSpot side.
 - **HubSpot engagement on mark-sent (v1.2 addition).** When `/mark-sent/:id` fires, `src/outreach/logSentEmail.ts` logs an Email engagement against the HubSpot contact + company so the timeline reflects the send. Properties: `hs_timestamp` (sentAt epoch ms), `hs_email_direction = 'EMAIL'`, `hs_email_status = 'SENT'`, `hs_email_subject`, `hs_email_text` (capped at 60K chars). Associations are created via `hs.crm.associations.v4.basicApi.createDefault('emails', emailId, 'contacts'|'companies', ...)` so type IDs are resolved by HubSpot, not hard-coded. The returned engagement id is stored on `Draft.hubspotEmailId` for idempotency (a second mark-sent call returns the cached id without re-creating). Best-effort: internal try/catch in the helper means HubSpot failures never block the `/queue` redirect — they surface as `AuditLog 'hubspotEngagement.failed'` with the error message. Skip path: if no HubSpot contact exists by email AND no `hubspotCompanyId` is on the Lead, log `AuditLog 'hubspotEngagement.skipped-no-associations'` and don't create an orphan engagement. Success path logs `AuditLog 'hubspotEngagement.logged'` with `{ emailId, contactId, companyId }`. Same helper is the integration point when the Gmail-API send (PRD §9.6) replaces manual mark-sent.
 
+**Triage hub (v1.6).** `/queue` opens with a **triage strip**: pending email count, renewals-to-call count (links to `/renewals-call`), manual-vm count (links to `/manual-vm-queue`), awaiting-reply count, and approved count. Pending drafts support **lane filters** via `?lane=`: `all` (default), `post-sale` (renewal / reactivation / quarterly / upsell), `sequence` (cold + followup-*), `replies` (replied / noshow), `vm` (voicemail drafts). Post-sale cards show a clickable **phone line** (`tel:`) when `phoneE164` is on file. A compact **Renewals to call** section (top 5 open sequences) appears when any renewal call cadence is active. Toolbar links: Sales co-pilot, Renewals to call, Manual VM queue.
+
+**Engagement dashboard (v1.7).** Below the triage strip, `/queue` shows an **email engagement panel** with three headline metrics: **avg open rate**, **avg reply rate**, and **emails sent** (all-time, across every `Draft` with `status IN ('sent','auto-sent')` excluding voicemail kinds). A collapsible **“Break down by email type”** table stratifies the same rates by kind bucket:
+
+| Bucket label | Draft `kind` values |
+| --- | --- |
+| Cold (touch 1) | `cold` |
+| Follow-up 1–4 | `followup-2` … `followup-5` |
+| Nudge | `nudge` |
+| Reactivation | `reactivation` |
+| Renewal | `renewal` |
+| Quarterly / Upsell | `quarterly`, `upsell` |
+| Reply response | `replied` (outbound response draft) |
+
+Only buckets with at least one send appear in the table — the panel stays compact when a lane is unused.
+
+**Rate inputs.**
+
+- **Reply rate (reliable).** Numerator = distinct outbound sends that received an inbound reply, attributed via `AuditLog` rows where `action='reply.draft-created'` and `meta.matchedDraftId` points at the sent draft. Denominator = count of sent email drafts in that bucket. This reuses the same dedup boundary as §9.7 (`Draft.inboundGmailMessageId @unique` on the resulting `kind='replied'` draft).
+- **Open rate (best-effort).** A send counts as “opened” when **either** (a) the HubSpot Email engagement stored on `Draft.hubspotEmailId` has `hs_email_open_count > 0`, **or** (b) the associated HubSpot contact’s `hs_email_last_open_date` falls within **30 days after** that draft’s `sentAt`. Because outbound mail goes through **Gmail API** (§9.6), HubSpot tracking pixels are not injected — open counts on logged CRM emails are often zero even when the prospect read the message. The panel surfaces a footnote when HubSpot returns no open data. Reply rate remains the primary actionable signal; open rate is a **temperature hint**, not a billing-grade metric.
+
+**Per-lead temperature.** Draft cards (pending + approved), and rows in the **💤 Sent — awaiting reply** section, show a clickable badge when the lead has prior sends:
+
+| Badge | Rule | Operator hint |
+| --- | --- | --- |
+| **Hot — replied** | At least one inbound reply recorded | Prioritize thoughtful reply or call; skip generic sequence templates |
+| **Warm — opened** | HubSpot open signal, no reply yet | Shorter nudge with one clear ask, or a different pain-point angle |
+| **Cool — awaiting signal** | 1–2 sends, no open/reply yet | Stay on sequence timing unless awaiting-reply window triggers nudge |
+| **Cold — no engagement** | 3+ sends, no open or reply | Consider pausing sequence, nudge, or alternate channel |
+
+Clicking a badge opens **`GET /queue/lead-engagement/:leadId`** — a server-rendered page listing every sent email for that lead (type, date, opened?, replied?) plus the suggested approach text. Same auth cookie as `/queue` (`queueAuth`).
+
+**JSON API (v1.7).** For scripts or future UI:
+
+- `GET /queue/engagement-stats` → full overview (`totals`, `openRate`, `replyRate`, `byBucket[]`, `computedAt`, `openDataNote`).
+- `GET /queue/engagement-stats?leadId={id}` → single-lead `LeadEngagementSummary`.
+- `GET /queue/engagement-stats?refresh=1` → bypass the 5-minute in-process cache (HubSpot round-trips on refresh).
+
+Implementation: `src/outreach/emailEngagementStats.ts` (aggregation + HubSpot fetch), `src/ui/engagementDashboard.ts` (HTML fragments). No schema change — stats are derived from existing `Draft`, `AuditLog`, and HubSpot properties.
+
+**Specialized operator queues (v1.6).**
+
+| Route | Purpose |
+| --- | --- |
+| `/queue` | Email draft review + triage + engagement dashboard |
+| `/queue/lead-engagement/:leadId` | Per-lead send history, open/reply flags, temperature + approach hint |
+| `/queue/engagement-stats` | JSON engagement overview (optional `?leadId=`, `?refresh=1`) |
+| `/renewals-call` | Live renewal calls — 5 touches on BD 3–7, HubSpot task mirror |
+| `/manual-vm-queue` | State-law restricted leads (FL, OK, WA, IN, MA, TX, CA) — human-placed vm/call |
+
 ### 9.6 Sending & Sequencing — unchanged from v1.1
 
 ### 9.7 Reply Detection — v1.2 additions
@@ -454,39 +534,67 @@ Same as v1.1, plus:
 
 
 
-### 9.8 Pipeline Scoring + Brief — unchanged from v1.1 (sorts by `score × expectedCommission`)
+### 9.8 Pipeline Scoring + Brief
 
-### 9.9 Voicemail Drops (AMD — not ringless)
+Scoring unchanged from v1.1 (sorts by `score × expectedCommission`).
 
-**What this is.** A standard Twilio outbound call with Answering Machine Detection (`DetectMessageEnd`, 30s timeout). The callee's phone **rings**. If Twilio classifies the answer as a machine (voicemail greeting + beep), Twilio plays a pre-rendered ElevenLabs MP3 (`eleven_multilingual_v2`, cloned Sonia voice). If a human answers, behavior depends on touch number (below).
+**Daily brief sections (5:00 PM ET, v1.6 order of leverage):**
 
-**What this is not.** Ringless voicemail (RVM) — silent carrier-side injection without ringing — is explicitly out of scope. Twilio does not offer RVM; third-party RVM vendors carry additional TCPA/carrier-block risk and are not used.
+1. `📬 New replies` — last 24h inbound (highest priority)
+2. `📈 Hiring spikes` — intent signal flips
+3. Hot leads + at-risk deals (scoring)
+4. Suggested call list (prospect pool)
+5. **`📞 Renewals to call`** — open renewal call sequences (7-day window, link to `/renewals-call`)
+6. `🚨 Manual VM required` — restricted-state leads (`/manual-vm-queue`)
+7. Queue depth + yesterday stats
 
-**ElevenLabs.** One TTS render per draft at draft-creation time; MP3 stored on `Draft.audioMp3`. Re-approval of the same draft never re-renders. Model: `eleven_multilingual_v2` via `ELEVENLABS_VOICE_ID` (cloned voice).
+### 9.9 Voicemail Drops (AMD — consent-gated reactivation only)
 
-**Safety gates (before any paid API call):** landline-only (`isLandline` via Twilio Lookups), `doNotContact` / Suppression, state matrix (`MANUAL_ONLY_US_STATES`: FL, OK, WA, IN, MA → manual queue), one vm draft per lead per touch.
+**Scope (v1.6).** AI voicemail applies **only** to **reactivation** prospects who have opted in via **prior express written consent (PEWC)** after a sent reactivation email. **Renewals never receive AI vm** — they use the live-call cadence in §9.10. **Cold-prospect vm is off.**
 
-**Two-touch sequence:**
+**What this is.** A standard Twilio outbound call with Answering Machine Detection (`DetectMessageEnd`, 30s timeout). The callee's phone **rings**. If Twilio classifies the answer as a machine (voicemail greeting + beep), Twilio plays a pre-rendered ElevenLabs MP3 (`eleven_multilingual_v2`) wrapped with **deterministic artificial-voice + opt-out disclosures** (`wrapVoicemailScript`). If a **human** answers, Twilio **hangs up** — no live bridge, no conversational AI agent.
 
-| Touch | Draft kind | Cron | Send window | Human answers | Machine / no live human |
+**What this is not.** Ringless voicemail (RVM) — silent carrier-side injection without ringing — is explicitly out of scope. Live two-way AI voice remains a **V1 non-goal** (§14).
+
+**Consent gate.** Renewal and reactivation emails append an optional PEWC footer linking to `GET /consent-phone` (JWT-signed). On opt-in: `Lead.priorWrittenConsent=true`, `priorWrittenConsentAt` set. `dropVoicemails` requires consent **and** a sent **reactivation** draft within 30 days. STOP/unsubscribe replies clear consent and suppress (§12).
+
+**Auto-send gate.** Twilio dials only when `VM_AI_AUTO_SEND=true` on **both** web and cron services (counsel sign-off). When enabled, reactivation vm drafts are created as `status='approved'` so `sendApproved` picks them up every 10 min. When disabled, vm scripts appear in `/queue` as reference only.
+
+**ElevenLabs.** One TTS render per draft at draft-creation time; MP3 stored on `Draft.audioMp3`. Model: `eleven_multilingual_v2` via `ELEVENLABS_VOICE_ID`.
+
+**Safety gates (before any paid API call):** landline-only (`isLandline` via Twilio Lookups; `SMOKE_TEST_LEAD_ID` bypasses for operator validation), `doNotContact` / Suppression, state matrix (`MANUAL_ONLY_US_STATES`: FL, OK, WA, IN, MA, TX, CA → `/manual-vm-queue`), federal TCPA quiet hours (8 AM–9 PM local), one active vm-1 pipeline per lead (rejected / tombstone drafts do not block retry).
+
+**Two-touch sequence (reactivation trigger only):**
+
+| Touch | Draft kind | Cron | Send window | Human answers | Machine |
 | --- | --- | --- | --- | --- | --- |
-| 1st | `voicemail` | `dropVoicemails` 2 PM ET | **After-hours only** — outside local Mon–Fri 9 AM–6 PM, or anytime Sat/Sun (`isVm1SendWindowOpen`) | **Bridge to `SONIA_PHONE`** — prep brief + whisper (first-live-connect script) | Play MP3 after beep |
-| 2nd | `voicemail-2` | `runSecondCalls` (~3 business days after vm-1 dropped) | Anytime (approve when Sonia can pick up within ~10 min) | **Bridge to `SONIA_PHONE`** — prep brief + whisper | Play MP3 after beep |
+| 1st | `voicemail` | `dropVoicemails` 2 PM ET | **After-hours only** — outside local Mon–Fri 9 AM–6 PM, or anytime Sat/Sun (`isVm1SendWindowOpen`) | **Hang up** | Play MP3 after beep |
+| 2nd | `voicemail-2` | `runSecondCalls` (~3 business days after vm-1 dropped) | Anytime within TCPA hours | **Hang up** | Play MP3 after beep |
 
-**Gatekeepers and receptionists.** Treatment-center main lines are frequently answered by front desk staff — especially 24/7 admissions lines. Twilio AMD does not distinguish gatekeeper from owner; both classify as `human` and trigger the live bridge on vm-1 and vm-2.
+**Inbound callbacks.** `POST /webhook/twilio/inbound` forwards callers on the Twilio number to `SONIA_PHONE` (live operator, not AI).
 
-- **Vm-1 send window** reduces business-hours dials so AMD is more likely to reach a voicemail box. If a human still answers (e.g., overnight admissions desk), the call bridges to Sonia — same gatekeeper playbook as vm-2.
-- **Vm-2** remains the primary business-hours live touch when Sonia is available.
-- Prep brief (`buildPrepBriefEmail`) includes owner name/title, gatekeeper script, and touch-specific pitch angle.
-- **Automated gatekeeper navigation** (AI asks for owner → hold → transfer → drop VM) remains a **V1 non-goal** (§14).
+**Operator smoke test.** Set `SMOKE_TEST_LEAD_ID` to the test `Lead.id` on web + cron. Run `npx tsx src/scripts/seedSmokeTestPostSaleQueue.ts` to stage renewal + reactivation queue fixtures; `RUN_VM_PIPELINE=true VM_AI_AUTO_SEND=true` exercises the full reactivation → consent → vm path.
 
-**Operator guidance for recovery centers:**
+**v1.5 note (superseded).** Vm-1/vm-2 human pickup previously bridged to Sonia with prep brief + whisper. v1.6 post-sale vm is **machine-only**; live calls for renewals use §9.10.
 
-- Approve vm-1 anytime from `/queue` — sends automatically once the lead's **local after-hours window** opens (no extra action).
-- Approve vm-2 only when Sonia can pick up within ~10 minutes (`sendApproved` interval).
-- Restricted-state leads use `/manual-vm-queue` (human-placed call or VM).
+### 9.10 Post-Sale Workflows — renewal vs reactivation
 
-### 9.10 Post-Sale Workflows — unchanged from v1.1
+**Renewal (`kind='renewal'`, daily `renewalWarnings` 10 AM ET).**
+
+- **Who:** Closed-won clients whose `ss_renewal_date` falls 55–65 days out.
+- **Email:** CSM tone — confirm next contract period; pricing belongs on the **live call**, not in the email.
+- **After send:** `flagRenewalForCall()` fires from `sendApproved` / `/mark-sent`. No AI vm.
+- **Live-call cadence:** Up to **5 touches** on business days **3, 4, 5, 6, 7** after the renewal email sends (first HubSpot task due **BD 3**; window closes after **BD 7**). Progress tracked in `AuditLog` (`renewal.call-flagged`, `renewal.call-touch`, `renewal.call-completed`, `renewal.call-expired`); HubSpot tasks created/completed via `src/shared/hubspotTask.ts`.
+- **Operator surfaces:** `/renewals-call` (full table), compact preview on `/queue`, `📞 Renewals to call` in daily brief, HubSpot task on company.
+- **Cron:** `renewalCallFollowups` 8:00 AM ET — creates due touch tasks, expires stale sequences.
+
+**Reactivation (`kind='reactivation'`, weekly Mon 3 AM ET).**
+
+- **Who:** Open HubSpot deals stale 30+ days with prior engagement (`replied` or `followup-*` draft history).
+- **Email:** Win-back tone — fresh angle + 15-min ask; optional PEWC footer if phone on file.
+- **After send + PEWC:** Optional consent-gated AI vm (§9.9). Cap 10 drafts/week.
+
+**Quarterly check-ins and upsell** — unchanged from v1.1 (draft + Sonia approves).
 
 ### 9.11 NEW: Discovery Call Prep Brief
 
@@ -577,9 +685,17 @@ Required prompts:
 
 -----
 
-## 12. Compliance Architecture — unchanged from v1.1
+## 12. Compliance Architecture
 
-CAN-SPAM, TCPA, HIPAA, contract §7d, audit logging.
+CAN-SPAM, TCPA, HIPAA, contract §7d, audit logging. See `kb/compliance/can-spam-tcpa.md`.
+
+**v1.6 additions:**
+
+- **PEWC (prior express written consent)** for post-sale phone contact — click-through on `/consent-phone`; stored on `Lead.priorWrittenConsent`. Required before reactivation AI vm.
+- **Artificial-voice disclosures** injected deterministically on all vm scripts (`wrapVoicemailScript`) — not left to the LLM.
+- **STOP / unsubscribe replies** — `replyWatcher` detects opt-out text, suppresses email + phone, clears PEWC, cancels pending drafts.
+- **State matrix expanded** — TX and CA added to manual-only states (FL, OK, WA, IN, MA, TX, CA).
+- **Renewals** — live calls only; no prerecorded vm to existing clients without a separate counsel review path.
 
 -----
 
