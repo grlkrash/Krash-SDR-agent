@@ -29,6 +29,9 @@ const HUBSPOT_EMAIL_STATUS_SENT = 'SENT';
 const SEARCH_LIMIT = 1;
 const TWILIO_MACHINE_DETECTION = 'DetectMessageEnd';
 const TWILIO_MACHINE_DETECTION_TIMEOUT = 30;
+// Twilio default 1200ms — mobile/GV greetings have mid-greeting silence gaps;
+// 2500ms reduces false machine_end_beep before the real record tone (Twilio AMD FAQ).
+const TWILIO_MACHINE_DETECTION_SPEECH_END_MS = 2500;
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -226,13 +229,17 @@ const dropVoicemailViaTwilio = async (
 
   const publicUrl = process.env.PUBLIC_URL ?? '';
   const fromNumber = process.env.TWILIO_FROM_NUMBER ?? '';
+  const smokeTest = isSmokeTestLead(lead.id);
   const call = await twilio.calls.create({
     to: phoneE164,
     from: fromNumber,
     machineDetection: TWILIO_MACHINE_DETECTION,
     machineDetectionTimeout: TWILIO_MACHINE_DETECTION_TIMEOUT,
+    machineDetectionSpeechEndThreshold: TWILIO_MACHINE_DETECTION_SPEECH_END_MS,
     statusCallback: `${publicUrl}/webhook/twilio/status?draftId=${draft.id}`,
     url: `${publicUrl}/webhook/twilio/twiml?draftId=${draft.id}`,
+    // Smoke-test only — listen in Twilio Console → call → Recording to debug AMD timing.
+    record: smokeTest,
   });
   await prisma.draft.update({
     where: { id: draft.id },
@@ -242,6 +249,8 @@ const dropVoicemailViaTwilio = async (
     leadId: lead.id,
     callSid: call.sid,
     phoneE164,
+    recording: smokeTest,
+    amdSpeechEndThresholdMs: TWILIO_MACHINE_DETECTION_SPEECH_END_MS,
   });
 };
 

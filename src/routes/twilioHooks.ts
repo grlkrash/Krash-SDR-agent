@@ -34,6 +34,8 @@ const HUBSPOT_CALL_DIRECTION = 'OUTBOUND';
 const MACHINE_END_BEEP = 'machine_end_beep';
 const CALL_STATUS_COMPLETED = 'completed';
 const BRIDGE_TIMEOUT_SECONDS = 20;
+// Brief pause after AMD before <Play> — gives GV/carrier mailboxes time to enter record mode.
+const PRE_PLAY_PAUSE_SECONDS = 2;
 
 const isVoicemailBridgeKind = (kind: string): kind is VoicemailBridgeKind =>
   kind === 'voicemail' || kind === 'voicemail-2';
@@ -214,7 +216,13 @@ twilioRouter.post('/webhook/twilio/twiml', async (req, res) => {
   // Machine answered → drop the pre-rendered MP3 (same path for vm-1 and vm-2).
   if (answeredBy.startsWith('machine')) {
     const audioUrl = `${publicUrl}/audio/${escapeXml(draftId)}`;
-    res.type('text/xml').send(`<Response><Play>${audioUrl}</Play></Response>`);
+    await audit('voicemail.machine-play', draftId, {
+      answeredBy,
+      pauseSeconds: PRE_PLAY_PAUSE_SECONDS,
+    });
+    res.type('text/xml').send(
+      `<Response><Pause length="${PRE_PLAY_PAUSE_SECONDS}"/><Play>${audioUrl}</Play></Response>`,
+    );
     return;
   }
 
