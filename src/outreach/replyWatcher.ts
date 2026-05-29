@@ -50,6 +50,11 @@ import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/companie
 import { claude, extractText } from '../shared/claude.js';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import { REPLIED_SYSTEM, buildRepliedUser } from '../prompts/replied.js';
+import {
+  isOptOutReplyText,
+  optOutLead,
+  resolveLeadContactEmail,
+} from '../shared/leadOptOut.js';
 
 const MODEL = 'claude-sonnet-4-5-20250929';
 const MAX_TOKENS = 512;
@@ -64,6 +69,7 @@ const OOO_BODY_MARKERS = [
 const TERMINAL_DEDUP_ACTIONS = [
   'reply.draft-created',
   'reply.ooo-detected',
+  'reply.opt-out-stop',
 ] as const;
 const HUBSPOT_INBOUND_DIRECTION = 'INCOMING_EMAIL';
 // HubSpot rejects email bodies above ~64KB; matches logSentEmail.ts.
@@ -372,6 +378,40 @@ export const checkReplies = async (): Promise<void> => {
     });
     if (matched === null) continue;
 
+    const lead = await prisma.lead.findUnique({
+      where: { id: matched.leadId },
+      include: { enrichment: true },
+    });
+    if (lead === null) continue;
+
+    if (isOptOutReplyText(snippet) || isOptOutReplyText(subject)) {
+      const contactEmail = resolveLeadContactEmail(
+        lead.enrichment?.ownerEmail,
+        lead.enrichment?.ownerName,
+        lead.website,
+      );
+      const fromEmail = extractFromAddress(from);
+      const email = contactEmail !== '' ? contactEmail : fromEmail;
+      const { cancelledDrafts } = await optOutLead({
+        leadId: lead.id,
+        email,
+        phone: lead.phoneE164 ?? '',
+        reason: snippet.slice(0, 120) || subject.slice(0, 120) || 'stop',
+        source: 'email-reply-stop',
+      });
+      await audit('reply.opt-out-stop', 'Lead', lead.id, {
+        inboundMessageId: inboundId,
+        matchedDraftId: matched.id,
+        matchedDraftKind: matched.kind,
+        from,
+        subject,
+        snippet: snippet.slice(0, INBOUND_SNIPPET_AUDIT_MAX_CHARS),
+        cancelledDrafts,
+        receivedAt: receivedAt.toISOString(),
+      });
+      continue;
+    }
+
     // A reply to a followup-N still gets the COLD draft as context — that's
     // the original pitch the model needs to ground its response in.
     const coldDraft = matched.kind === 'cold'
@@ -381,12 +421,6 @@ export const checkReplies = async (): Promise<void> => {
           orderBy: { sentAt: 'asc' },
         });
     if (coldDraft === null) continue;
-
-    const lead = await prisma.lead.findUnique({
-      where: { id: matched.leadId },
-      include: { enrichment: true },
-    });
-    if (lead === null) continue;
 
     const userPrompt = buildRepliedUser(coldDraft, snippet, lead, lead.enrichment);
 
