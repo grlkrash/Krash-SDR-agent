@@ -36,6 +36,7 @@ const TEMPERATURE = 0.7;
 const MS_PER_DAY = 86_400_000;
 const REACTIVATION_KIND = 'reactivation';
 const RENEWAL_KIND = 'renewal';
+const GEN_ATTEMPTS = 3;
 const TIER_PRICES = { claimed: 600, select: 2400, premium: 9600 } as const;
 type Tier = keyof typeof TIER_PRICES;
 
@@ -140,14 +141,28 @@ if (recentRenewal === null || forceNewRenewal) {
       tier,
       TIER_PRICES[tier],
     );
-    const msg = await claude.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      temperature: 0.6,
-      system: cached(RENEWAL_WARNING_SYSTEM),
-      messages: [{ role: 'user', content: userPrompt }],
-    });
-    const gen = GenSchema.parse(extractJSON(msg));
+    let gen: z.infer<typeof GenSchema> | null = null;
+    for (let attempt = 1; attempt <= GEN_ATTEMPTS; attempt++) {
+      try {
+        const msg = await claude.messages.create({
+          model: MODEL,
+          max_tokens: MAX_TOKENS,
+          temperature: 0,
+          system: cached(RENEWAL_WARNING_SYSTEM),
+          messages: [{ role: 'user', content: userPrompt }],
+        });
+        gen = GenSchema.parse(extractJSON(msg));
+        break;
+      } catch (err) {
+        console.log(JSON.stringify({
+          step: 'renewal-gen-retry',
+          attempt,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        if (attempt === GEN_ATTEMPTS) throw err;
+      }
+    }
+    if (gen === null) throw new Error('renewal draft generation failed');
     const body =
       lead.phoneE164 !== null && !lead.priorWrittenConsent
         ? appendPhoneConsentOffer(gen.body, lead.id)
