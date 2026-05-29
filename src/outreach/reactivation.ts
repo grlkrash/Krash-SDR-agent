@@ -30,7 +30,7 @@ import {
   REACTIVATION_SYSTEM,
   buildReactivationUser,
 } from '../prompts/reactivation.js';
-import { appendPhoneConsentOffer } from '../shared/phoneConsentFooter.js';
+import { appendPostSalePhoneFooter } from '../shared/phoneConsentFooter.js';
 
 const cached = (text: string): Array<TextBlockParam> => [
   { type: 'text', text, cache_control: { type: 'ephemeral' } },
@@ -264,8 +264,10 @@ export const generateReactivationDrafts = async (): Promise<void> => {
       const gen = GenSchema.parse(extractJSON(msg));
 
       const body =
-        lead.phoneE164 !== null && !lead.priorWrittenConsent
-          ? appendPhoneConsentOffer(gen.body, lead.id)
+        lead.phoneE164 !== null
+          ? appendPostSalePhoneFooter(gen.body, lead.id, {
+              priorWrittenConsent: lead.priorWrittenConsent,
+            })
           : gen.body;
 
       const draft = await prisma.draft.create({

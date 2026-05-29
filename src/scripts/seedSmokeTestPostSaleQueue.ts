@@ -26,7 +26,9 @@ import {
   RENEWAL_WARNING_SYSTEM,
   buildRenewalUser,
 } from '../prompts/renewalWarning.js';
-import { appendPhoneConsentOffer } from '../shared/phoneConsentFooter.js';
+import {
+  appendPostSalePhoneFooter,
+} from '../shared/phoneConsentFooter.js';
 import { parseContractTermMonths, parseHsDate } from '../shared/dealRenewal.js';
 
 const DEFAULT_SMOKE_LEAD_ID = 'cmppuywni0000lyw4v7cormbt';
@@ -110,7 +112,13 @@ if (forceNewRenewal) {
     where: { leadId, kind: RENEWAL_KIND, status: { in: ['pending', 'approved'] } },
     data: { status: 'rejected', rejectReason: 'smoke-test-reset' },
   });
-  console.log(JSON.stringify({ step: 'renewal-draft-reset', count: reset.count }));
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { priorWrittenConsent: false, priorWrittenConsentAt: null },
+  });
+  lead.priorWrittenConsent = false;
+  lead.priorWrittenConsentAt = null;
+  console.log(JSON.stringify({ step: 'renewal-draft-reset', count: reset.count, consentReset: true }));
 }
 
 const recentRenewal = await prisma.draft.findFirst({
@@ -159,13 +167,30 @@ if (recentRenewal === null || forceNewRenewal) {
           attempt,
           error: err instanceof Error ? err.message : String(err),
         }));
-        if (attempt === GEN_ATTEMPTS) throw err;
+        if (attempt === GEN_ATTEMPTS) {
+          gen = {
+            subject: `${lead.name} — renewal check-in (smoke test)`,
+            body: [
+              'Mark,',
+              '',
+              `Your renewal for ${lead.name} is coming up, and I wanted to reach out early to confirm we're continuing together.`,
+              '',
+              'Can you do Tuesday at 2:00 PM ET or Thursday at 10:00 AM ET for a quick call?',
+              '',
+              'Talk soon,',
+              'Sonia',
+            ].join('\n'),
+          };
+          console.log(JSON.stringify({ step: 'renewal-gen-fallback', reason: 'claude-json-failed' }));
+        }
       }
     }
     if (gen === null) throw new Error('renewal draft generation failed');
     const body =
-      lead.phoneE164 !== null && !lead.priorWrittenConsent
-        ? appendPhoneConsentOffer(gen.body, lead.id)
+      lead.phoneE164 !== null
+        ? appendPostSalePhoneFooter(gen.body, lead.id, {
+            priorWrittenConsent: lead.priorWrittenConsent,
+          })
         : gen.body;
     const draft = await prisma.draft.create({
       data: {

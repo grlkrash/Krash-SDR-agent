@@ -13,6 +13,7 @@ import {
   awaitingReplySilenceCutoff,
 } from '../shared/awaitingReply.js';
 import { guessEmail } from '../shared/guessEmail.js';
+import { appendPostSalePhoneFooter } from '../shared/phoneConsentFooter.js';
 import {
   isHtmlBody,
   normalizeApprovedBody,
@@ -156,6 +157,17 @@ const KillLeadBodySchema = z.object({
 const DEFAULT_KILL_REASON = 'no reason given';
 
 type DraftWithRel = Draft & { lead: Lead & { enrichment: Enrichment | null } };
+
+const POST_SALE_EMAIL_KINDS = new Set(['renewal', 'reactivation']);
+
+/** Match send-time footer so /queue preview shows what Gmail will receive. */
+const resolveQueueEmailBody = (d: DraftWithRel): string => {
+  if (!POST_SALE_EMAIL_KINDS.has(d.kind)) return d.body;
+  if (d.lead.phoneE164 === null) return d.body;
+  return appendPostSalePhoneFooter(d.body, d.lead.id, {
+    priorWrittenConsent: d.lead.priorWrittenConsent,
+  });
+};
 
 // Shape returned by the awaiting-reply lead.findMany — the included `drafts`
 // slice contains AT MOST one row (the most recent sent draft), filtered by
@@ -529,7 +541,7 @@ const renderPendingCard = (
     <form method="post" action="${approveAction}" class="draft-form">
       ${renderSendToField(d.lead.enrichment, d.lead)}
       <input type="text" name="subject" value="${escapeHtml(subject)}" placeholder="(no subject — voicemail or call)" />
-      ${renderEmailEditor(d.body)}
+      ${renderEmailEditor(resolveQueueEmailBody(d))}
       <input type="text" name="reason" placeholder="reject reason (only sent with Reject)" />
       <div class="actions">
         <button type="submit" class="btn btn-approve">Approve</button>
@@ -580,7 +592,7 @@ const renderApprovedCard = (
       </div>
       <div class="email-field">
         <div class="email-label">Body</div>
-        ${renderEmailBodyPreview(d.body)}
+        ${renderEmailBodyPreview(resolveQueueEmailBody(d))}
       </div>
     </div>
     <div class="approved-actions">

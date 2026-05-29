@@ -25,6 +25,9 @@ import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import { isSmokeTestLead } from '../shared/smokeTestLead.js';
 import { isTcpaCallingHoursOpen, isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
 import { flagRenewalForCall } from './renewalCallFlag.js';
+import { appendPostSalePhoneFooter } from '../shared/phoneConsentFooter.js';
+
+const POST_SALE_EMAIL_KINDS = new Set(['renewal', 'reactivation']);
 
 const HUBSPOT_EMAIL_DIRECTION = 'EMAIL';
 const HUBSPOT_EMAIL_STATUS_SENT = 'SENT';
@@ -359,10 +362,16 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
       references = anchor;
     }
   }
+  let outboundBody = draft.body;
+  if (POST_SALE_EMAIL_KINDS.has(draft.kind) && lead.phoneE164 !== null) {
+    outboundBody = appendPostSalePhoneFooter(outboundBody, lead.id, {
+      priorWrittenConsent: lead.priorWrittenConsent,
+    });
+  }
   const gmailMessageId = await sendEmail({
     to: targetEmail,
     subject,
-    body: draft.body,
+    body: outboundBody,
     inReplyTo,
     references,
     openTrackPixelUrl: buildOpenTrackPixelUrl(draftId),
@@ -382,7 +391,7 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
   await logHubspotEngagement({
     draftId,
     subject: draft.subject,
-    body: draft.body,
+    body: outboundBody,
     sentAt,
     targetEmail,
     companyId: lead.hubspotCompanyId,

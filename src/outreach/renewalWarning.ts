@@ -32,7 +32,7 @@ import {
   RENEWAL_WARNING_SYSTEM,
   buildRenewalUser,
 } from '../prompts/renewalWarning.js';
-import { appendPhoneConsentOffer } from '../shared/phoneConsentFooter.js';
+import { appendPostSalePhoneFooter } from '../shared/phoneConsentFooter.js';
 
 const TIER_PRICES = { claimed: 600, select: 2400, premium: 9600 } as const;
 type Tier = keyof typeof TIER_PRICES;
@@ -239,8 +239,10 @@ export const generateRenewalWarnings = async (): Promise<void> => {
       const gen = GenSchema.parse(extractJSON(msg));
 
       const body =
-        lead.phoneE164 !== null && !lead.priorWrittenConsent
-          ? appendPhoneConsentOffer(gen.body, lead.id)
+        lead.phoneE164 !== null
+          ? appendPostSalePhoneFooter(gen.body, lead.id, {
+              priorWrittenConsent: lead.priorWrittenConsent,
+            })
           : gen.body;
 
       const draft = await prisma.draft.create({
