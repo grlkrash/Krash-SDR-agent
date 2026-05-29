@@ -29,10 +29,12 @@ The FCC ruled that AI-generated / synthetic voices are **"artificial"** under th
 **What the agent does today:**
 
 1. **Disclosure (code-enforced).** Every MP3 is wrapped by `wrapVoicemailScript()` in `src/shared/voicemailCompliance.ts` before ElevenLabs render. The opening states: automated, pre-recorded, artificial voice; business name (Sobriety Select); purpose (sales / marketing follow-up). The closing gives opt-out: call `SONIA_PHONE` or reply **stop** to email.
-2. **No live-person impersonation.** Prompts forbid "this is Sonia" — the voice is synthetic. Live bridges (human answers) connect to the real Sonia on `SONIA_PHONE`.
-3. **Landline-only gate.** Twilio Line Type Intelligence blocks mobile/VoIP before draft or send. Prerecorded voice to wireless without prior express written consent violates 47 U.S.C. § 227(b)(1)(A).
-4. **TCPA quiet hours.** All vm-1 and vm-2 drops defer outside local **8 AM–9 PM** (`isTcpaCallingHoursOpen`). Vm-1 additionally defers Mon–Fri 9 AM–6 PM so AMD is more likely to reach a mailbox.
-5. **AMD, not ringless.** Outbound calls ring normally. MP3 plays only when Twilio AMD classifies a machine. Not carrier-side silent injection.
+2. **STOP reply handling.** `checkReplies` detects short stop/unsubscribe replies and runs `optOutLead()` — suppresses email + phone, sets `doNotContact`, cancels pending drafts (no Claude reply draft).
+3. **Inbound Twilio forwarding.** Calls to `TWILIO_FROM_NUMBER` hit `/webhook/twilio/inbound` and dial `SONIA_PHONE`.
+4. **No live-person impersonation.** Prompts forbid "this is Sonia" — the voice is synthetic. Live bridges (human answers) connect to the real Sonia on `SONIA_PHONE`.
+5. **Landline-only gate.** Twilio Line Type Intelligence blocks mobile/VoIP before draft or send. Prerecorded voice to wireless without prior express written consent violates 47 U.S.C. § 227(b)(1)(A).
+6. **TCPA quiet hours.** All vm-1 and vm-2 drops defer outside local **8 AM–9 PM** (`isTcpaCallingHoursOpen`). Vm-1 additionally defers Mon–Fri 9 AM–6 PM so AMD is more likely to reach a mailbox.
+7. **AMD, not ringless.** Outbound calls ring normally. MP3 plays only when Twilio AMD classifies a machine. Not carrier-side silent injection.
 
 ### Consent — open counsel question
 
