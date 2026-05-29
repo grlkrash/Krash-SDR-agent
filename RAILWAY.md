@@ -245,7 +245,7 @@ ElevenLabs renders the MP3; **Twilio places the call and plays it**. No ElevenLa
 curl https://YOUR_PUBLIC_URL/health
 ```
 
-**Inbound callback test:** call your `TWILIO_FROM_NUMBER` — you should hear "Connecting you to Sobriety Select" and `SONIA_PHONE` should ring.
+**Inbound callback test:** call your `TWILIO_FROM_NUMBER` — you should hear "Connecting you to Sonia at Sobriety Select" and `SONIA_PHONE` should ring.
 
 For automated vm (only when `VM_AI_AUTO_SEND=true` after counsel sign-off): approve one voicemail draft in `/queue` → `sendApproved` fires within 10 min. Check `AuditLog` for `sender.voicemail-dropped` or `sender.voicemail-deferred-send-window`.
 

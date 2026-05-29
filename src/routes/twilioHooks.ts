@@ -177,7 +177,7 @@ twilioRouter.post('/webhook/twilio/inbound', async (req, res) => {
     return;
   }
   const twiml =
-    '<Response><Say>Connecting you to Sobriety Select.</Say>'
+    '<Response><Say>Connecting you to Sonia at Sobriety Select.</Say>'
     + `<Dial timeout="${INBOUND_DIAL_TIMEOUT_SECONDS}">${escapeXml(sonia)}</Dial></Response>`;
   res.type('text/xml').send(twiml);
 });
