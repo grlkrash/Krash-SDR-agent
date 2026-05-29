@@ -20,7 +20,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { Enrichment, Lead } from '@prisma/client';
 import { z } from 'zod';
-import { hs, hsRetry } from '../shared/hubspot.js';
+import { logHubspotOutboundCall } from '../shared/logHubspotCall.js';
 import { sendEmail } from '../shared/gmail.js';
 import {
   buildPrepBriefEmail,
@@ -30,7 +30,6 @@ import {
 
 const CONNECTED = 'connected';
 const NO_ANSWER = 'no-answer';
-const HUBSPOT_CALL_DIRECTION = 'OUTBOUND';
 const MACHINE_END_BEEP = 'machine_end_beep';
 const CALL_STATUS_COMPLETED = 'completed';
 const BRIDGE_TIMEOUT_SECONDS = 20;
@@ -74,54 +73,24 @@ type TwilioBodyShape = z.infer<typeof TwilioBody>;
 
 const computeDisposition = (answeredBy: string): string => {
   if (answeredBy === MACHINE_END_BEEP) return CONNECTED;
-  // Human answer on vm-1 or vm-2 = bridge attempted. Outcome lives in dial-result.
   if (answeredBy === 'human') return CONNECTED;
   return NO_ANSWER;
 };
 
 const logHubspotCallEngagement = async (opts: {
   draftId: string;
-  kind: string;
   companyId: string | null;
   callStatus: string;
   answeredBy: string;
   callSid: string;
 }): Promise<void> => {
-  try {
-    if (opts.companyId === null) {
-      await audit('voicemail.hubspot-skipped-no-company', opts.draftId, {
-        callSid: opts.callSid,
-      });
-      return;
-    }
-    const disposition = computeDisposition(opts.answeredBy);
-    const created = await hsRetry(() =>
-      hs.crm.objects.calls.basicApi.create({
-        properties: {
-          hs_timestamp: Date.now().toString(),
-          hs_call_direction: HUBSPOT_CALL_DIRECTION,
-          hs_call_status: opts.callStatus,
-          hs_call_disposition: disposition,
-          hubspot_owner_id: process.env.HUBSPOT_OWNER_ID ?? '',
-        },
-        associations: [],
-      }),
-    );
-    await hsRetry(() =>
-      hs.crm.associations.v4.basicApi.createDefault(
-        'calls', created.id, 'companies', opts.companyId ?? '',
-      ),
-    );
-    await audit('voicemail.hubspot-logged', opts.draftId, {
-      callEngagementId: created.id,
-      companyId: opts.companyId,
-      disposition,
-    });
-  } catch (err) {
-    await audit('voicemail.hubspot-failed', opts.draftId, {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  const disposition = computeDisposition(opts.answeredBy);
+  await logHubspotOutboundCall({
+    draftId: opts.draftId,
+    companyId: opts.companyId,
+    disposition,
+    callStatus: opts.callStatus,
+  });
 };
 
 export const twilioRouter = express.Router();
@@ -289,7 +258,8 @@ twilioRouter.post('/webhook/twilio/dial-result', async (req, res) => {
   // Apologize and hang up. (We never drop voicemail audio at a LIVE human
   // who just heard ringing — that'd be jarring.)
   res.type('text/xml').send(
-    '<Response><Say>Sorry, I just missed you. I will try you back. Thank you.</Say><Hangup/></Response>',
+    '<Response><Say>This is an automated message from Sobriety Select. '
+    + 'Sorry, our team just missed you. We will try you back. Thank you.</Say><Hangup/></Response>',
   );
 });
 
@@ -328,7 +298,6 @@ twilioRouter.post('/webhook/twilio/status', async (req, res) => {
   if (draft !== null) {
     await logHubspotCallEngagement({
       draftId,
-      kind: draft.kind,
       companyId: draft.lead.hubspotCompanyId,
       callStatus,
       answeredBy,

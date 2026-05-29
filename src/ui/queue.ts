@@ -12,10 +12,14 @@ import {
   awaitingReplySilenceCutoff,
 } from '../shared/awaitingReply.js';
 import { guessEmail } from '../shared/guessEmail.js';
+import { logHubspotOutboundCall } from '../shared/logHubspotCall.js';
+import { MANUAL_VM_CALLED_STATUS } from '../outreach/brief/manualVm.js';
+
+const VOICEMAIL_KINDS = new Set(['voicemail', 'voicemail-2']);
+const isVoicemailKind = (kind: string): boolean => VOICEMAIL_KINDS.has(kind);
 
 const PAGE_SIZE = 30;
 // We fetch a window larger than the page so sort=value can rank the full
-// backlog (not just the 30 newest) before we slice. Pending queue should
 // never realistically exceed this; if it does the operator has bigger problems.
 const FETCH_CAP = 200;
 const TEXTAREA_ROWS = 12;
@@ -271,6 +275,28 @@ const renderKillLeadFormById = (leadId: string): string =>
 const renderKillLeadForm = (d: DraftWithRel): string => renderKillLeadFormById(d.lead.id);
 
 const renderPendingCard = (d: DraftWithRel): string => {
+  if (isVoicemailKind(d.kind)) {
+    return `
+  <div class="card vm-card">
+    ${renderHeader(d)}
+    <p class="vm-notice">AI voicemail auto-send is paused pending counsel sign-off. Place live calls manually — use this script as a reference if helpful.</p>
+    <pre class="email-text body">${escapeHtml(d.body)}</pre>
+    <div class="actions">
+      <form method="POST" action="/mark-manual-vm/${encodeURIComponent(d.id)}" style="display:inline"
+        onsubmit="return confirm('Log that you left a manual voicemail or live call for this lead?')">
+        <button type="submit" class="btn btn-manual-vm">✓ Left VM manually</button>
+      </form>
+      <form method="POST" action="/reject/${encodeURIComponent(d.id)}" style="display:inline">
+        <input type="hidden" name="reason" value="not needed" />
+        <button type="submit" class="btn btn-reject">Dismiss</button>
+      </form>
+    </div>
+    <div class="lead-actions">
+      ${renderKillLeadForm(d)}
+    </div>
+  </div>`;
+  }
+
   const subject = d.subject ?? '';
   const approveAction = `/approve/${encodeURIComponent(d.id)}`;
   const rejectAction = `/reject/${encodeURIComponent(d.id)}`;
@@ -295,6 +321,22 @@ const renderPendingCard = (d: DraftWithRel): string => {
 };
 
 const renderApprovedCard = (d: DraftWithRel): string => {
+  if (isVoicemailKind(d.kind)) {
+    return `
+  <div class="card approved-card vm-card">
+    ${renderHeader(d)}
+    <p class="vm-notice">This vm draft was approved before auto-send was paused. Do not auto-send — log your manual call instead.</p>
+    <pre class="email-text body">${escapeHtml(d.body)}</pre>
+    <div class="approved-actions">
+      <form method="POST" action="/mark-manual-vm/${encodeURIComponent(d.id)}" style="display:inline"
+        onsubmit="return confirm('Log manual voicemail / live call?')">
+        <button type="submit" class="btn btn-manual-vm">✓ Left VM manually</button>
+      </form>
+      ${renderKillLeadForm(d)}
+    </div>
+  </div>`;
+  }
+
   const subjectText = d.subject ?? '';
   const subjectHtml =
     subjectText === ''
@@ -471,6 +513,9 @@ const STYLE = `
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn { font-size: 14px; padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-weight: 500; }
   .btn-approve { background: #16a34a; color: white; }
+  .btn-manual-vm { background: #0d9488; color: white; }
+  .vm-notice { background: #fff7ed; border: 1px solid #fdba74; padding: 10px; border-radius: 6px;
+    font-size: 13px; margin: 10px 0; color: #9a3412; }
   .btn-reject { background: white; color: #b91c1c; border-color: #fecaca; }
   .btn-kill { background: #dc2626; color: white; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; }
   .btn-kill:hover { background: #b91c1c; }
@@ -750,10 +795,14 @@ queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
   }
   const existing = await prisma.draft.findUnique({
     where: { id },
-    select: { subject: true, body: true, status: true },
+    select: { subject: true, body: true, status: true, kind: true },
   });
   if (existing === null) {
     res.status(404).json({ error: 'not found' });
+    return;
+  }
+  if (isVoicemailKind(existing.kind)) {
+    res.redirect(303, '/queue');
     return;
   }
   const subjectChanged =
@@ -777,6 +826,53 @@ queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
         bodyChanged,
         previousStatus: existing.status,
       },
+    },
+  });
+  res.redirect(303, '/queue');
+});
+
+queueRouter.post('/mark-manual-vm/:id', queueAuth, async (req, res) => {
+  const id = readId(req);
+  if (id === null) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const existing = await prisma.draft.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      kind: true,
+      status: true,
+      leadId: true,
+      lead: { select: { hubspotCompanyId: true } },
+    },
+  });
+  if (existing === null || !isVoicemailKind(existing.kind)) {
+    res.status(404).json({ error: 'not found or not a voicemail draft' });
+    return;
+  }
+  if (existing.status === MANUAL_VM_CALLED_STATUS) {
+    res.redirect(303, '/queue');
+    return;
+  }
+
+  const sentAt = new Date();
+  await prisma.draft.update({
+    where: { id },
+    data: { status: MANUAL_VM_CALLED_STATUS, sentAt },
+  });
+  await logHubspotOutboundCall({
+    draftId: id,
+    companyId: existing.lead.hubspotCompanyId,
+    disposition: 'connected',
+    callStatus: 'COMPLETED',
+  });
+  await prisma.auditLog.create({
+    data: {
+      action: 'manualVm.marked-called',
+      entity: 'Draft',
+      entityId: id,
+      meta: { leadId: existing.leadId, kind: existing.kind, source: 'queue' },
     },
   });
   res.redirect(303, '/queue');

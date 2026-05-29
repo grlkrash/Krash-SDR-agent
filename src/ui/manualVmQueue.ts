@@ -93,7 +93,7 @@ manualVmQueueRouter.get('/manual-vm-queue', queueAuth, async (_req, res) => {
   <style>${pageStyles}</style>
 </head><body>
   <h1>Manual VM queue</h1>
-  <p class="meta">State-law restricted leads (FL, OK, WA, IN, MA) · matrix v${escapeHtml(MATRIX_VERSION)}</p>
+  <p class="meta">State-law restricted leads (FL, OK, WA, IN, MA, TX, CA) · matrix v${escapeHtml(MATRIX_VERSION)}</p>
   <div class="disclaimer">Not legal advice. Mark <strong>Called</strong> after you place the manual voicemail or live call.
     Leads stay here until marked — they do not roll off after 24h.</div>
   <div class="toolbar">
