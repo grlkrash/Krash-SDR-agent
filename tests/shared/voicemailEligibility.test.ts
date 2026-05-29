@@ -22,4 +22,14 @@ describe('isAutoVoicemailAllowed', () => {
     expect(r.allowed).toBe(false);
     if (!r.allowed) expect(r.reason).toMatch(/^non-us-country:/);
   });
+
+  it('blocks TX without consent', () => {
+    const r = isAutoVoicemailAllowed('+15125551234', 'TX', false);
+    expect(r).toEqual({ allowed: false, reason: 'state-law-restricted:TX' });
+  });
+
+  it('blocks CA without consent', () => {
+    const r = isAutoVoicemailAllowed('+14155551234', 'CA', false);
+    expect(r).toEqual({ allowed: false, reason: 'state-law-restricted:CA' });
+  });
 });

@@ -10,6 +10,9 @@
 
 const VM1_BUSINESS_START_HOUR = 9;
 const VM1_BUSINESS_END_HOUR = 18;
+// Federal TCPA / industry standard — no telemarketing calls before 8 AM or after 9 PM local.
+const TCPA_EARLIEST_HOUR = 8;
+const TCPA_LATEST_HOUR = 21;
 
 const STATE_IANA: Record<string, string> = {
   CT: 'America/New_York', DC: 'America/New_York', DE: 'America/New_York',
@@ -35,6 +38,10 @@ const STATE_IANA: Record<string, string> = {
 };
 
 export type Vm1SendWindowResult =
+  | { allowed: true; timezone: string }
+  | { allowed: false; reason: string; timezone: string | null };
+
+export type TcpaCallingHoursResult =
   | { allowed: true; timezone: string }
   | { allowed: false; reason: string; timezone: string | null };
 
@@ -77,6 +84,27 @@ export const isVm1SendWindowOpen = (
 
   if (hour >= VM1_BUSINESS_START_HOUR && hour < VM1_BUSINESS_END_HOUR) {
     return { allowed: false, reason: 'business-hours-vm1-deferred', timezone };
+  }
+
+  return { allowed: true, timezone };
+};
+
+export const isTcpaCallingHoursOpen = (
+  state: string | null,
+  now: Date = new Date(),
+): TcpaCallingHoursResult => {
+  const normalized = state?.toUpperCase().trim() ?? '';
+  const timezone = STATE_IANA[normalized];
+  if (timezone === undefined) {
+    return { allowed: false, reason: 'unknown-state-timezone', timezone: null };
+  }
+
+  const { hour } = getLocalClock(now, timezone);
+  if (hour < TCPA_EARLIEST_HOUR) {
+    return { allowed: false, reason: 'tcpa-before-8am-local', timezone };
+  }
+  if (hour >= TCPA_LATEST_HOUR) {
+    return { allowed: false, reason: 'tcpa-after-9pm-local', timezone };
   }
 
   return { allowed: true, timezone };

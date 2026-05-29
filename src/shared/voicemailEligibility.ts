@@ -36,12 +36,20 @@ export type EligibilityResult =
 //      restrictions, narrow exemptions.
 // MA — 940 CMR 19: telemarketing registration requirement + restrictions
 //      on artificial voice messages.
+// TX — Tex. Bus. & Com. Code Ch. 304 (telephone solicitation) + SB 140
+//      (2023): strict disclosure and consent rules for automated/prerecorded
+//      voice; B2B not exempt from all provisions. High statutory penalties.
+// CA — Cal. Civ. Code §§ 1798.100+ (CPRA) + Cal. Bus. & Prof. Code §§
+//      17511–17539 (telemarketing): heightened scrutiny on artificial voice
+//      and automated outreach; marketing intent triggers consent analysis.
 export const MANUAL_ONLY_US_STATES = new Set<string>([
   'FL',
   'OK',
   'WA',
   'IN',
   'MA',
+  'TX',
+  'CA',
 ]);
 
 export const isAutoVoicemailAllowed = (

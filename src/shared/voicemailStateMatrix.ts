@@ -35,6 +35,8 @@ const MANUAL_STATUTE: Record<string, string> = {
   WA: 'RCW 80.36.400 + RCW 19.190',
   IN: 'IC 24-5-14 (Indiana Telephone Privacy Act)',
   MA: '940 CMR 19',
+  TX: 'Tex. Bus. & Com. Code Ch. 304 + SB 140 (2023)',
+  CA: 'Cal. Bus. & Prof. Code §§ 17511–17539 + CPRA',
 };
 
 const MANUAL_NOTES: Record<string, string> = {
@@ -43,12 +45,14 @@ const MANUAL_NOTES: Record<string, string> = {
   WA: 'ADAD restrictions for commercial solicitation; consent or established business relationship.',
   IN: 'Prerecorded message restrictions; narrow exemptions.',
   MA: 'Telemarketing registration + restrictions on artificial voice messages.',
+  TX: 'Automated/prerecorded voice requires strict disclosure and consent; high penalties ($500–$10,000/violation).',
+  CA: 'Mini-TCPA + privacy overlap; artificial voice marketing triggers consent and disclosure analysis.',
 };
 
 const FEDERAL_AUTO_NOTE =
   'Federal TCPA B2B landline path only. Agent still requires Twilio Line Type Intelligence = landline and blocks mobile/VoIP.';
 
-export const MATRIX_VERSION = '2026-05-28';
+export const MATRIX_VERSION = '2026-05-29';
 export const MATRIX_COUNSEL_DISCLAIMER =
   'This matrix is a best-faith engineering summary, not legal advice. '
   + 'Have qualified counsel review and sign off before scaling beyond a pilot. '

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isVm1SendWindowOpen } from '../../src/shared/voicemailSendWindow.js';
+import { isTcpaCallingHoursOpen, isVm1SendWindowOpen } from '../../src/shared/voicemailSendWindow.js';
 
 describe('isVm1SendWindowOpen', () => {
   it('blocks vm-1 during weekday business hours in ET', () => {
@@ -39,5 +39,33 @@ describe('isVm1SendWindowOpen', () => {
     if (!result.allowed) {
       expect(result.reason).toBe('unknown-state-timezone');
     }
+  });
+});
+
+describe('isTcpaCallingHoursOpen', () => {
+  it('blocks before 8 AM local', () => {
+    // Tue May 27 2025 11:00 UTC = 07:00 ET (FL)
+    const result = isTcpaCallingHoursOpen('FL', new Date('2025-05-27T11:00:00Z'));
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toBe('tcpa-before-8am-local');
+    }
+  });
+
+  it('blocks at 9 PM local and later', () => {
+    // Tue May 27 2025 01:00 UTC = 21:00 ET previous calendar day... 
+    // Tue May 27 2025 02:00 UTC = 22:00 ET Mon May 26 — use Wed for clarity
+    // Wed May 28 2025 01:00 UTC = 21:00 ET Tue May 27
+    const result = isTcpaCallingHoursOpen('NY', new Date('2025-05-28T01:00:00Z'));
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toBe('tcpa-after-9pm-local');
+    }
+  });
+
+  it('allows mid-day local', () => {
+    // Tue May 27 2025 17:00 UTC = 13:00 ET
+    const result = isTcpaCallingHoursOpen('NY', new Date('2025-05-27T17:00:00Z'));
+    expect(result.allowed).toBe(true);
   });
 });
