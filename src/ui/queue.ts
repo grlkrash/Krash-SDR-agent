@@ -27,6 +27,19 @@ import {
   countOpenRenewalCalls,
   type RenewalCallRow,
 } from '../outreach/renewalCallFlag.js';
+import {
+  getEngagementDashboardBundle,
+  getEngagementOverview,
+  getLeadEngagementSummary,
+  type EngagementOverview,
+  type LeadTemperatureBadge,
+} from '../outreach/emailEngagementStats.js';
+import {
+  ENGAGEMENT_DASHBOARD_STYLE,
+  renderEngagementDashboard,
+  renderLeadEngagementPage,
+  renderLeadTemperatureBadge,
+} from './engagementDashboard.js';
 
 const VOICEMAIL_KINDS = new Set(['voicemail', 'voicemail-2']);
 const isVoicemailKind = (kind: string): boolean => VOICEMAIL_KINDS.has(kind);
@@ -318,7 +331,10 @@ const renderSendToLine = (enr: Enrichment | null, lead: Lead): string => {
   return `<div class="send-to send-to-warn">Send to: ${escapeHtml(target)} <span class="dim">(guessed — verify before approving)</span></div>`;
 };
 
-const renderHeader = (d: DraftWithRel): string => {
+const renderHeader = (
+  d: DraftWithRel,
+  tempBadge: LeadTemperatureBadge | undefined,
+): string => {
   const enr = d.lead.enrichment;
   const tier = safeTier(enr?.expectedProduct ?? null);
   const pct = d.personalizationPct ?? null;
@@ -342,7 +358,7 @@ const renderHeader = (d: DraftWithRel): string => {
 
   return `
     <div class="hdr">
-      <div class="lead-name">${escapeHtml(d.lead.name)}</div>
+      <div class="lead-name">${escapeHtml(d.lead.name)}${renderLeadTemperatureBadge(tempBadge)}</div>
       <div class="meta">${escapeHtml(d.lead.city)}, ${escapeHtml(d.lead.state)}${renderSiteLink(d.lead)}</div>
     </div>
     <div class="owner">${renderOwnerLine(enr)}${renderPrepBriefLink(d.lead)}</div>
@@ -402,11 +418,15 @@ const renderEmailEditor = (body: string): string => `
         <input type="hidden" name="body" value="" />
       </div>`;
 
-const renderPendingCard = (d: DraftWithRel): string => {
+const renderPendingCard = (
+  d: DraftWithRel,
+  tempBadges: Map<string, LeadTemperatureBadge>,
+): string => {
+  const badge = tempBadges.get(d.lead.id);
   if (isVoicemailKind(d.kind)) {
     return `
   <div class="card vm-card">
-    ${renderHeader(d)}
+    ${renderHeader(d, badge)}
     <p class="vm-notice">AI voicemail auto-send is paused pending counsel sign-off. Place live calls manually — use this script as a reference if helpful.</p>
     <pre class="email-text body">${escapeHtml(d.body)}</pre>
     <div class="actions">
@@ -431,7 +451,7 @@ const renderPendingCard = (d: DraftWithRel): string => {
 
   return `
   <div class="card">
-    ${renderHeader(d)}
+    ${renderHeader(d, badge)}
     <form method="post" action="${approveAction}" class="draft-form">
       <input type="text" name="subject" value="${escapeHtml(subject)}" placeholder="(no subject — voicemail or call)" />
       ${renderEmailEditor(d.body)}
@@ -448,11 +468,15 @@ const renderPendingCard = (d: DraftWithRel): string => {
   </div>`;
 };
 
-const renderApprovedCard = (d: DraftWithRel): string => {
+const renderApprovedCard = (
+  d: DraftWithRel,
+  tempBadges: Map<string, LeadTemperatureBadge>,
+): string => {
+  const badge = tempBadges.get(d.lead.id);
   if (isVoicemailKind(d.kind)) {
     return `
   <div class="card approved-card vm-card">
-    ${renderHeader(d)}
+    ${renderHeader(d, badge)}
     <p class="vm-notice">This vm draft was approved before auto-send was paused. Do not auto-send — log your manual call instead.</p>
     <pre class="email-text body">${escapeHtml(d.body)}</pre>
     <div class="approved-actions">
@@ -472,7 +496,7 @@ const renderApprovedCard = (d: DraftWithRel): string => {
       : `<pre class="email-text subject">${escapeHtml(subjectText)}</pre>`;
   return `
   <div class="card approved-card">
-    ${renderHeader(d)}
+    ${renderHeader(d, badge)}
     <div class="approved-email">
       <div class="email-field">
         <div class="email-label">Subject</div>
@@ -562,15 +586,19 @@ const renderUndoRow = (d: DraftWithRel): string => {
 // One click on Nudge generates a fresh follow-up; the old sent draft stays
 // untouched (no paused→rejected supersede happens on this surface, the
 // updateMany in POST /nudge is a no-op when nothing is paused).
-const renderAwaitingReplyRow = (lead: AwaitingReplyLead): string => {
+const renderAwaitingReplyRow = (
+  lead: AwaitingReplyLead,
+  tempBadges: Map<string, LeadTemperatureBadge>,
+): string => {
   const sentAt = lead.drafts[0]?.sentAt ?? null;
   const daysAgoLabel = sentAt === null
     ? 'Last sent: unknown'
     : `Last sent ${Math.floor((Date.now() - sentAt.getTime()) / DAY_MS)} days ago`;
+  const badge = renderLeadTemperatureBadge(tempBadges.get(lead.id));
   return `
   <div class="undo-row">
     <div class="undo-info">
-      <span class="lead-name-sm">${escapeHtml(lead.name)}</span>
+      <span class="lead-name-sm">${escapeHtml(lead.name)}${badge}</span>
       <span class="undo-meta">${escapeHtml(lead.city)}, ${escapeHtml(lead.state)} · ${escapeHtml(daysAgoLabel)}</span>
     </div>
     <div class="undo-actions">
@@ -673,6 +701,7 @@ const STYLE = `
   .btn-kill:hover { background: #b91c1c; }
   a { color: #2563eb; text-decoration: none; }
   a:hover { text-decoration: underline; }
+  ${ENGAGEMENT_DASHBOARD_STYLE}
 `;
 
 // Two-step confirm for the Kill lead button: a confirm() with the consequences,
@@ -808,6 +837,8 @@ const renderPage = (
   openManualVm: number,
   sortMode: 'newest' | 'value',
   laneMode: LaneMode,
+  engagementOverview: EngagementOverview,
+  tempBadges: Map<string, LeadTemperatureBadge>,
 ): string => {
   const newestSel = sortMode === 'newest' ? ' selected' : '';
   const valueSel = sortMode === 'value' ? ' selected' : '';
@@ -818,11 +849,11 @@ const renderPage = (
   const pendingCards =
     pending.length === 0
       ? `<div class="section-empty">No pending drafts${laneMode === 'all' ? '' : ` in “${laneMode}”`}. Nice work.</div>`
-      : pending.map((d) => renderPendingCard(d)).join('\n');
+      : pending.map((d) => renderPendingCard(d, tempBadges)).join('\n');
   const approvedCards =
     approved.length === 0
       ? '<div class="section-empty">Nothing waiting to send.</div>'
-      : approved.map((d) => renderApprovedCard(d)).join('\n');
+      : approved.map((d) => renderApprovedCard(d, tempBadges)).join('\n');
   // Mirror the undo-section pattern: hide entirely when empty so the page
   // stays calm when there's nothing to act on.
   const awaitingReplySection =
@@ -831,7 +862,7 @@ const renderPage = (
       : `
   <section class="queue-section" id="awaiting-reply">
     <h2 class="section-title">💤 Sent — awaiting reply ${REPLY_SILENCE_DAYS}+ days <span class="count">(${totalAwaitingReply})</span></h2>
-    ${awaitingReply.map((l) => renderAwaitingReplyRow(l)).join('\n')}
+    ${awaitingReply.map((l) => renderAwaitingReplyRow(l, tempBadges)).join('\n')}
   </section>`;
   // Hide the undo section entirely when nothing is paused/rejected — it's a
   // tool that's only relevant when there's something to fix.
@@ -879,6 +910,7 @@ const renderPage = (
     awaitingReply: totalAwaitingReply,
     lane: laneMode,
   })}
+  ${renderEngagementDashboard(engagementOverview)}
   <div class="top-meta">${totalPendingLane} shown · ${totalApproved} approved &amp; ready to send${awaitingReplyMeta}${undoMeta}</div>
   <div class="toolbar">
     <a href="/copilot" style="font-size:14px;margin-right:12px;">Sales co-pilot →</a>
@@ -1004,6 +1036,15 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
   const visibleApproved = approvedRows.slice(0, PAGE_SIZE);
   const visiblePausedRejected = pausedRejectedRows.slice(0, PAGE_SIZE);
   const visibleAwaitingReply = orderedAwaitingReply.slice(0, PAGE_SIZE);
+  const visibleLeadIds = [
+    ...new Set([
+      ...visiblePending.map((d) => d.leadId),
+      ...visibleApproved.map((d) => d.leadId),
+      ...visibleAwaitingReply.map((l) => l.id),
+    ]),
+  ];
+  const { overview: engagementOverview, badges: tempBadges } =
+    await getEngagementDashboardBundle(visibleLeadIds);
   res
     .type('html')
     .send(
@@ -1022,8 +1063,40 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
         openManualVm,
         sortMode,
         laneMode,
+        engagementOverview,
+        tempBadges,
       ),
     );
+});
+
+queueRouter.get('/queue/engagement-stats', queueAuth, async (req, res) => {
+  const leadId = typeof req.query.leadId === 'string' ? req.query.leadId : undefined;
+  if (leadId !== undefined) {
+    const summary = await getLeadEngagementSummary(leadId);
+    if (summary === null) {
+      res.status(404).json({ error: 'lead not found' });
+      return;
+    }
+    res.json(summary);
+    return;
+  }
+  const refresh = req.query.refresh === '1';
+  const overview = await getEngagementOverview({ refresh });
+  res.json(overview);
+});
+
+queueRouter.get('/queue/lead-engagement/:id', queueAuth, async (req, res) => {
+  const leadId = readId(req);
+  if (leadId === null) {
+    res.status(400).type('html').send('Invalid lead id');
+    return;
+  }
+  const summary = await getLeadEngagementSummary(leadId);
+  if (summary === null) {
+    res.status(404).type('html').send('Lead not found');
+    return;
+  }
+  res.type('html').send(renderLeadEngagementPage(summary));
 });
 
 queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
