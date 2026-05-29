@@ -47,6 +47,8 @@ export type EngagementOverview = {
   byBucket: BucketStats[];
   computedAt: string;
   openDataNote: string;
+  range: EngagementRange;
+  rangeLabel: string;
 };
 
 export type SentEmailRow = {
@@ -71,6 +73,8 @@ export type LeadEngagementSummary = {
   temperatureLabel: string;
   approachHint: string;
   emails: SentEmailRow[];
+  range: EngagementRange;
+  rangeLabel: string;
 };
 
 const BUCKET_LABELS: Record<EngagementBucketId, string> = {
@@ -107,6 +111,48 @@ const OPEN_DATA_NOTE =
   'Open rate uses a tracking pixel in auto-sent emails (sendApproved). '
   + 'Image-blocked clients won\'t register; Apple Mail Privacy Protection may inflate counts. '
   + 'Emails marked "Sent manually" from Gmail are not pixel-tracked.';
+
+export type EngagementRange = '7d' | '30d' | '60d' | '90d' | 'all';
+
+const MS_PER_DAY = 86_400_000;
+
+const RANGE_DAYS: Record<Exclude<EngagementRange, 'all'>, number> = {
+  '7d': 7,
+  '30d': 30,
+  '60d': 60,
+  '90d': 90,
+};
+
+const RANGE_LABELS: Record<EngagementRange, string> = {
+  '7d': 'Last 7 days',
+  '30d': 'Last 30 days',
+  '60d': 'Last 60 days',
+  '90d': 'Last 90 days',
+  all: 'All time',
+};
+
+export const parseEngagementRange = (raw: unknown): EngagementRange => {
+  if (raw === '7d' || raw === '30d' || raw === '60d' || raw === '90d' || raw === 'all') return raw;
+  return 'all';
+};
+
+export const engagementRangeLabel = (range: EngagementRange): string => RANGE_LABELS[range];
+
+export const draftSentWithinRange = (
+  sentAt: Date,
+  range: EngagementRange,
+  nowMs: number = Date.now(),
+): boolean => {
+  if (range === 'all') return true;
+  const cutoffMs = nowMs - RANGE_DAYS[range] * MS_PER_DAY;
+  return sentAt.getTime() >= cutoffMs;
+};
+
+const filterDraftsForRange = (
+  drafts: SentDraftRow[],
+  range: EngagementRange,
+): SentDraftRow[] =>
+  drafts.filter((d) => draftSentWithinRange(d.sentAt, range));
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -245,12 +291,14 @@ const getEngagementData = async (refresh?: boolean): Promise<EngagementData> => 
 const buildBadgesForLeads = (
   leadIds: string[],
   data: EngagementData,
+  range: EngagementRange,
 ): Map<string, LeadTemperatureBadge> => {
+  const drafts = filterDraftsForRange(data.drafts, range);
   const repliedByLead = new Map<string, number>();
   const sentByLead = new Map<string, number>();
   const openedByLead = new Map<string, number>();
 
-  for (const draft of data.drafts) {
+  for (const draft of drafts) {
     if (!leadIds.includes(draft.leadId)) continue;
     sentByLead.set(draft.leadId, (sentByLead.get(draft.leadId) ?? 0) + 1);
     if (isDraftOpened(draft, data.pixelOpenedDraftIds)) {
@@ -261,6 +309,7 @@ const buildBadgesForLeads = (
     }
   }
 
+  const periodQs = range === 'all' ? '' : `?period=${encodeURIComponent(range)}`;
   const badges = new Map<string, LeadTemperatureBadge>();
   for (const leadId of leadIds) {
     const sent = sentByLead.get(leadId) ?? 0;
@@ -273,7 +322,7 @@ const buildBadgesForLeads = (
     badges.set(leadId, {
       temperature: temp.temperature,
       label: temp.label,
-      href: `/queue/lead-engagement/${encodeURIComponent(leadId)}`,
+      href: `/queue/lead-engagement/${encodeURIComponent(leadId)}${periodQs}`,
     });
   }
   return badges;
@@ -351,44 +400,55 @@ const buildOverview = (
   drafts: SentDraftRow[],
   repliedDraftIds: Set<string>,
   pixelOpenedDraftIds: Set<string>,
+  range: EngagementRange,
 ): EngagementOverview => {
+  const scoped = filterDraftsForRange(drafts, range);
   let opened = 0;
   let replied = 0;
-  for (const draft of drafts) {
+  for (const draft of scoped) {
     if (isDraftOpened(draft, pixelOpenedDraftIds)) opened += 1;
     if (repliedDraftIds.has(draft.id)) replied += 1;
   }
-  const sent = drafts.length;
+  const sent = scoped.length;
 
   return {
     totals: { sent, opened, replied },
     openRate: ratePct(opened, sent),
     replyRate: ratePct(replied, sent),
-    byBucket: buildBucketStats(drafts, repliedDraftIds, pixelOpenedDraftIds),
+    byBucket: buildBucketStats(scoped, repliedDraftIds, pixelOpenedDraftIds),
     computedAt: new Date().toISOString(),
     openDataNote: OPEN_DATA_NOTE,
+    range,
+    rangeLabel: engagementRangeLabel(range),
   };
 };
 
-export const getEngagementOverview = async (opts?: { refresh?: boolean }): Promise<EngagementOverview> => {
+export const getEngagementOverview = async (opts?: {
+  refresh?: boolean;
+  range?: EngagementRange;
+}): Promise<EngagementOverview> => {
+  const range = opts?.range ?? 'all';
   const data = await getEngagementData(opts?.refresh === true);
-  return buildOverview(data.drafts, data.repliedDraftIds, data.pixelOpenedDraftIds);
+  return buildOverview(data.drafts, data.repliedDraftIds, data.pixelOpenedDraftIds, range);
 };
 
 export const getEngagementDashboardBundle = async (
   leadIds: string[],
-  opts?: { refresh?: boolean },
+  opts?: { refresh?: boolean; range?: EngagementRange },
 ): Promise<{ overview: EngagementOverview; badges: Map<string, LeadTemperatureBadge> }> => {
+  const range = opts?.range ?? 'all';
   const data = await getEngagementData(opts?.refresh === true);
   return {
-    overview: buildOverview(data.drafts, data.repliedDraftIds, data.pixelOpenedDraftIds),
-    badges: buildBadgesForLeads(leadIds, data),
+    overview: buildOverview(data.drafts, data.repliedDraftIds, data.pixelOpenedDraftIds, range),
+    badges: buildBadgesForLeads(leadIds, data, range),
   };
 };
 
 export const getLeadEngagementSummary = async (
   leadId: string,
+  opts?: { range?: EngagementRange },
 ): Promise<LeadEngagementSummary | null> => {
+  const range = opts?.range ?? 'all';
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     include: { enrichment: true },
@@ -396,7 +456,10 @@ export const getLeadEngagementSummary = async (
   if (lead === null) return null;
 
   const data = await getEngagementData();
-  const leadDrafts = data.drafts.filter((d) => d.leadId === leadId);
+  const leadDrafts = filterDraftsForRange(
+    data.drafts.filter((d) => d.leadId === leadId),
+    range,
+  );
   const repliedDraftIds = new Set(
     data.replyEvents
       .filter((e) => e.leadId === leadId || leadDrafts.some((d) => d.id === e.matchedDraftId))
@@ -436,6 +499,8 @@ export const getLeadEngagementSummary = async (
     temperatureLabel: temp.label,
     approachHint: temp.hint,
     emails,
+    range,
+    rangeLabel: engagementRangeLabel(range),
   };
 };
 
@@ -447,8 +512,10 @@ export type LeadTemperatureBadge = {
 
 export const getLeadTemperatureBadges = async (
   leadIds: string[],
+  opts?: { range?: EngagementRange },
 ): Promise<Map<string, LeadTemperatureBadge>> => {
   if (leadIds.length === 0) return new Map();
+  const range = opts?.range ?? 'all';
   const data = await getEngagementData();
-  return buildBadgesForLeads(leadIds, data);
+  return buildBadgesForLeads(leadIds, data, range);
 };

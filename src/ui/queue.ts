@@ -31,12 +31,15 @@ import {
   getEngagementDashboardBundle,
   getEngagementOverview,
   getLeadEngagementSummary,
+  parseEngagementRange,
   type EngagementOverview,
+  type EngagementRange,
   type LeadTemperatureBadge,
 } from '../outreach/emailEngagementStats.js';
 import {
   ENGAGEMENT_DASHBOARD_STYLE,
   renderEngagementDashboard,
+  renderEngagementRangeFilters,
   renderLeadEngagementPage,
   renderLeadTemperatureBadge,
 } from './engagementDashboard.js';
@@ -271,7 +274,11 @@ const renderTriageStrip = (counts: {
   </nav>`;
 };
 
-const renderLaneFilters = (lane: LaneMode, sortMode: 'newest' | 'value'): string => {
+const renderLaneFilters = (
+  lane: LaneMode,
+  sortMode: 'newest' | 'value',
+  period: EngagementRange,
+): string => {
   const lanes: Array<{ id: LaneMode; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'post-sale', label: 'Post-sale' },
@@ -283,6 +290,7 @@ const renderLaneFilters = (lane: LaneMode, sortMode: 'newest' | 'value'): string
     const qs = new URLSearchParams();
     if (l.id !== 'all') qs.set('lane', l.id);
     if (sortMode === 'value') qs.set('sort', 'value');
+    if (period !== 'all') qs.set('period', period);
     const href = qs.size === 0 ? '/queue' : `/queue?${qs.toString()}`;
     const active = l.id === lane ? ' active' : '';
     return `<a class="lane-pill${active}" href="${href}">${escapeHtml(l.label)}</a>`;
@@ -837,12 +845,16 @@ const renderPage = (
   openManualVm: number,
   sortMode: 'newest' | 'value',
   laneMode: LaneMode,
+  engagementPeriod: EngagementRange,
   engagementOverview: EngagementOverview,
   tempBadges: Map<string, LeadTemperatureBadge>,
 ): string => {
   const newestSel = sortMode === 'newest' ? ' selected' : '';
   const valueSel = sortMode === 'value' ? ' selected' : '';
   const laneHidden = laneMode === 'all' ? '' : `<input type="hidden" name="lane" value="${escapeHtml(laneMode)}" />`;
+  const periodHidden = engagementPeriod === 'all'
+    ? ''
+    : `<input type="hidden" name="period" value="${escapeHtml(engagementPeriod)}" />`;
   const pendingLabel = laneMode === 'all'
     ? 'Pending review'
     : `Pending — ${laneMode}`;
@@ -910,6 +922,11 @@ const renderPage = (
     awaitingReply: totalAwaitingReply,
     lane: laneMode,
   })}
+  ${renderEngagementRangeFilters({
+    range: engagementPeriod,
+    sortMode,
+    laneMode,
+  })}
   ${renderEngagementDashboard(engagementOverview)}
   <div class="top-meta">${totalPendingLane} shown · ${totalApproved} approved &amp; ready to send${awaitingReplyMeta}${undoMeta}</div>
   <div class="toolbar">
@@ -917,7 +934,7 @@ const renderPage = (
     <a href="/renewals-call" style="font-size:14px;margin-right:12px;">Renewals to call →</a>
     <a href="/manual-vm-queue" style="font-size:14px;margin-right:12px;">Manual VM queue →</a>
     <form method="get" action="/queue">
-      ${laneHidden}
+      ${laneHidden}${periodHidden}
       <label for="sort">Sort pending:</label>
       <select id="sort" name="sort" onchange="this.form.submit()">
         <option value="newest"${newestSel}>Newest</option>
@@ -933,7 +950,7 @@ const renderPage = (
   ${renewalsSection}
   <section class="queue-section">
     <h2 class="section-title">📋 ${escapeHtml(pendingLabel)} <span class="count">(${totalPendingLane}${laneMode === 'all' ? '' : ` of ${totalPending}`})</span></h2>
-    ${renderLaneFilters(laneMode, sortMode)}
+    ${renderLaneFilters(laneMode, sortMode, engagementPeriod)}
     ${pendingCards}
   </section>
   <section class="queue-section">
@@ -959,6 +976,7 @@ queueRouter.use(express.urlencoded({ extended: false }));
 queueRouter.get('/queue', queueAuth, async (req, res) => {
   const sortMode: 'newest' | 'value' = req.query.sort === 'value' ? 'value' : 'newest';
   const laneMode = parseLaneMode(req.query.lane);
+  const engagementPeriod = parseEngagementRange(req.query.period);
   // Awaiting-reply window: any lead whose most-recent activity is a sent
   // draft >= REPLY_SILENCE_DAYS old, with no active successor (pending /
   // approved / paused) AND no recent nudge inside the same window. Once
@@ -1044,7 +1062,7 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
     ]),
   ];
   const { overview: engagementOverview, badges: tempBadges } =
-    await getEngagementDashboardBundle(visibleLeadIds);
+    await getEngagementDashboardBundle(visibleLeadIds, { range: engagementPeriod });
   res
     .type('html')
     .send(
@@ -1063,6 +1081,7 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
         openManualVm,
         sortMode,
         laneMode,
+        engagementPeriod,
         engagementOverview,
         tempBadges,
       ),
@@ -1071,8 +1090,9 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
 
 queueRouter.get('/queue/engagement-stats', queueAuth, async (req, res) => {
   const leadId = typeof req.query.leadId === 'string' ? req.query.leadId : undefined;
+  const range = parseEngagementRange(req.query.period);
   if (leadId !== undefined) {
-    const summary = await getLeadEngagementSummary(leadId);
+    const summary = await getLeadEngagementSummary(leadId, { range });
     if (summary === null) {
       res.status(404).json({ error: 'lead not found' });
       return;
@@ -1081,7 +1101,7 @@ queueRouter.get('/queue/engagement-stats', queueAuth, async (req, res) => {
     return;
   }
   const refresh = req.query.refresh === '1';
-  const overview = await getEngagementOverview({ refresh });
+  const overview = await getEngagementOverview({ refresh, range });
   res.json(overview);
 });
 
@@ -1091,7 +1111,8 @@ queueRouter.get('/queue/lead-engagement/:id', queueAuth, async (req, res) => {
     res.status(400).type('html').send('Invalid lead id');
     return;
   }
-  const summary = await getLeadEngagementSummary(leadId);
+  const range = parseEngagementRange(req.query.period);
+  const summary = await getLeadEngagementSummary(leadId, { range });
   if (summary === null) {
     res.status(404).type('html').send('Lead not found');
     return;

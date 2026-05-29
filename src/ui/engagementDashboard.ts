@@ -2,6 +2,7 @@
 
 import type {
   EngagementOverview,
+  EngagementRange,
   LeadEngagementSummary,
   LeadTemperatureBadge,
 } from '../outreach/emailEngagementStats.js';
@@ -56,7 +57,36 @@ export const ENGAGEMENT_DASHBOARD_STYLE = `
   .back-link { display: inline-block; margin-bottom: 16px; font-size: 14px; }
   .engagement-yes { color: #16a34a; font-weight: 600; }
   .engagement-no { color: #94a3b8; }
+  .engagement-range-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .engagement-range-pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid #d4d4d8;
+    background: white; color: #374151; text-decoration: none; font-weight: 500; }
+  .engagement-range-pill.active { background: #1e40af; color: white; border-color: #1e40af; }
 `;
+
+const ENGAGEMENT_RANGES: Array<{ id: EngagementRange; label: string }> = [
+  { id: '7d', label: '7 days' },
+  { id: '30d', label: '30 days' },
+  { id: '60d', label: '60 days' },
+  { id: '90d', label: '90 days' },
+  { id: 'all', label: 'All time' },
+];
+
+export const renderEngagementRangeFilters = (opts: {
+  range: EngagementRange;
+  sortMode: 'newest' | 'value';
+  laneMode: string;
+}): string => {
+  const items = ENGAGEMENT_RANGES.map((r) => {
+    const qs = new URLSearchParams();
+    if (r.id !== 'all') qs.set('period', r.id);
+    if (opts.laneMode !== 'all') qs.set('lane', opts.laneMode);
+    if (opts.sortMode === 'value') qs.set('sort', 'value');
+    const href = qs.size === 0 ? '/queue' : `/queue?${qs.toString()}`;
+    const active = r.id === opts.range ? ' active' : '';
+    return `<a class="engagement-range-pill${active}" href="${href}">${escapeHtml(r.label)}</a>`;
+  }).join('');
+  return `<div class="engagement-range-filters" role="toolbar" aria-label="Engagement time range">${items}</div>`;
+};
 
 export const renderEngagementDashboard = (overview: EngagementOverview): string => {
   const bucketRows = overview.byBucket.map((row) => `
@@ -68,7 +98,7 @@ export const renderEngagementDashboard = (overview: EngagementOverview): string 
     </tr>`).join('');
 
   const bucketTable = overview.byBucket.length === 0
-    ? '<p class="engagement-note">No sent emails yet — rates will appear after first sends.</p>'
+    ? `<p class="engagement-note">No sent emails in ${escapeHtml(overview.rangeLabel.toLowerCase())}.</p>`
     : `<table class="engagement-table">
         <thead><tr>
           <th>Type</th><th>Sent</th><th>Open</th><th>Reply</th>
@@ -78,7 +108,7 @@ export const renderEngagementDashboard = (overview: EngagementOverview): string 
 
   return `
   <section class="engagement-dash" aria-label="Email engagement rates">
-    <h2>📊 Email engagement (all time)</h2>
+    <h2>📊 Email engagement · ${escapeHtml(overview.rangeLabel)}</h2>
     <div class="engagement-metrics">
       <div class="engagement-metric">
         <div class="val">${formatRate(overview.openRate)}</div>
@@ -116,6 +146,14 @@ const formatSentDate = (iso: string): string => {
 };
 
 export const renderLeadEngagementPage = (summary: LeadEngagementSummary): string => {
+  const backQs = summary.range === 'all' ? '' : `?period=${encodeURIComponent(summary.range)}`;
+  const rangeFilters = ENGAGEMENT_RANGES.map((r) => {
+    const qs = r.id === 'all' ? '' : `?period=${encodeURIComponent(r.id)}`;
+    const href = `/queue/lead-engagement/${encodeURIComponent(summary.leadId)}${qs}`;
+    const active = r.id === summary.range ? ' active' : '';
+    return `<a class="engagement-range-pill${active}" href="${href}">${escapeHtml(r.label)}</a>`;
+  }).join('');
+
   const emailRows = summary.emails.map((e) => `
     <tr>
       <td>${escapeHtml(e.bucketLabel)}</td>
@@ -125,7 +163,7 @@ export const renderLeadEngagementPage = (summary: LeadEngagementSummary): string
     </tr>`).join('');
 
   const emailTable = summary.emails.length === 0
-    ? '<p class="engagement-note">No sent emails on record for this lead.</p>'
+    ? `<p class="engagement-note">No sent emails for this lead in ${escapeHtml(summary.rangeLabel.toLowerCase())}.</p>`
     : `<table class="engagement-table">
         <thead><tr>
           <th>Type</th><th>Sent</th><th>Opened</th><th>Replied</th>
@@ -149,9 +187,10 @@ export const renderLeadEngagementPage = (summary: LeadEngagementSummary): string
 </style>
 </head>
 <body class="lead-engagement-page">
-  <a class="back-link" href="/queue">← Back to queue</a>
+  <a class="back-link" href="/queue${backQs}">← Back to queue</a>
   <h1>${escapeHtml(summary.leadName)}</h1>
-  <div class="lead-engagement-meta">${escapeHtml(summary.city)}, ${escapeHtml(summary.state)} · ${String(summary.sent)} sent · ${String(summary.opened)} opened · ${String(summary.replied)} replied</div>
+  <div class="lead-engagement-meta">${escapeHtml(summary.city)}, ${escapeHtml(summary.state)} · ${escapeHtml(summary.rangeLabel)} · ${String(summary.sent)} sent · ${String(summary.opened)} opened · ${String(summary.replied)} replied</div>
+  <div class="engagement-range-filters" role="toolbar" aria-label="Engagement time range">${rangeFilters}</div>
   <span class="temp-badge ${tempCls}">${escapeHtml(summary.temperatureLabel)}</span>
   <div class="approach-hint"><strong>Suggested approach:</strong> ${escapeHtml(summary.approachHint)}</div>
   <section class="engagement-dash">

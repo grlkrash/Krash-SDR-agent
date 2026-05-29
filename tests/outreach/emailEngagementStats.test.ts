@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   bucketForKind,
+  draftSentWithinRange,
+  engagementRangeLabel,
   formatRate,
+  parseEngagementRange,
   ratePct,
 } from '../../src/outreach/emailEngagementStats.js';
 
@@ -37,5 +40,38 @@ describe('formatRate', () => {
   it('formats percentages and missing values', () => {
     expect(formatRate(null)).toBe('—');
     expect(formatRate(42.5)).toBe('42.5%');
+  });
+});
+
+describe('parseEngagementRange', () => {
+  it('accepts known period values and defaults to all', () => {
+    expect(parseEngagementRange('7d')).toBe('7d');
+    expect(parseEngagementRange('90d')).toBe('90d');
+    expect(parseEngagementRange('all')).toBe('all');
+    expect(parseEngagementRange(undefined)).toBe('all');
+    expect(parseEngagementRange('365d')).toBe('all');
+  });
+});
+
+describe('draftSentWithinRange', () => {
+  const nowMs = Date.parse('2026-05-29T12:00:00Z');
+
+  it('includes all sends for all-time range', () => {
+    const sentAt = new Date('2024-01-01T00:00:00Z');
+    expect(draftSentWithinRange(sentAt, 'all', nowMs)).toBe(true);
+  });
+
+  it('filters by rolling window from sentAt', () => {
+    const inside = new Date(nowMs - 5 * 86_400_000);
+    const outside = new Date(nowMs - 10 * 86_400_000);
+    expect(draftSentWithinRange(inside, '7d', nowMs)).toBe(true);
+    expect(draftSentWithinRange(outside, '7d', nowMs)).toBe(false);
+  });
+});
+
+describe('engagementRangeLabel', () => {
+  it('returns human labels for each range', () => {
+    expect(engagementRangeLabel('30d')).toBe('Last 30 days');
+    expect(engagementRangeLabel('all')).toBe('All time');
   });
 });
