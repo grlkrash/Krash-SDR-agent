@@ -17,6 +17,7 @@ import type { Draft, Enrichment, Lead } from '@prisma/client';
 import { FilterOperatorEnum } from '@hubspot/api-client/lib/codegen/crm/companies/models/Filter.js';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import { sendEmail } from '../shared/gmail.js';
+import { buildOpenTrackPixelUrl } from '../shared/openTrackPixel.js';
 import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
 import { isLandline, twilio } from '../shared/twilio.js';
@@ -364,6 +365,7 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
     body: draft.body,
     inReplyTo,
     references,
+    openTrackPixelUrl: buildOpenTrackPixelUrl(draftId),
   });
 
   const sentAt = new Date();

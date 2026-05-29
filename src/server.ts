@@ -8,6 +8,7 @@ import { renewalsCallRouter } from './ui/renewalsCall.js';
 import { prepBriefRouter } from './ui/prepBrief.js';
 import { copilotRouter } from './ui/copilot.js';
 import { unsubscribeRouter } from './routes/unsubscribe.js';
+import { openTrackRouter } from './routes/openTrack.js';
 import { phoneConsentRouter } from './routes/phoneConsent.js';
 import { twilioRouter } from './routes/twilioHooks.js';
 import { hs, hsRetry } from './shared/hubspot.js';
@@ -116,6 +117,7 @@ app.get('/health', async (_req, res) => {
 });
 
 app.use('/', queueRouter);
+app.use('/', openTrackRouter);
 app.use('/', manualVmQueueRouter);
 app.use('/', renewalsCallRouter);
 app.use('/', prepBriefRouter);

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { bodyToHtmlFragment, bodyToPlainText } from './emailHtml.js';
+import { buildOpenTrackPixelHtml } from './openTrackPixel.js';
 import { signUnsubToken } from './unsubscribeToken.js';
 
 // Sobriety Select is a registered DBA — per legal requirement, customer-facing
@@ -90,10 +91,18 @@ const buildPlainFooter = (unsubUrl: string): string =>
 
 type EmailBodies = { plain: string; html: string; unsubUrl: string };
 
-const buildBodies = (opts: { to: string; body: string }): EmailBodies => {
+const buildBodies = (opts: {
+  to: string;
+  body: string;
+  openTrackPixelUrl?: string;
+}): EmailBodies => {
   const unsubUrl = buildUnsubUrl(opts.to);
   const mainPlain = bodyToPlainText(opts.body);
   const mainHtml = bodyToHtmlFragment(opts.body);
+  const pixelHtml =
+    opts.openTrackPixelUrl === undefined || opts.openTrackPixelUrl === ''
+      ? ''
+      : buildOpenTrackPixelHtml(opts.openTrackPixelUrl);
   return {
     plain: `${mainPlain}${buildPlainFooter(unsubUrl)}`,
     html: [
@@ -102,6 +111,7 @@ const buildBodies = (opts: { to: string; body: string }): EmailBodies => {
       mainHtml,
       '</div>',
       buildHtmlFooter(unsubUrl),
+      pixelHtml,
       '</body></html>',
     ].join(''),
     unsubUrl,
@@ -158,9 +168,14 @@ export const sendEmail = async (opts: {
   body: string;
   inReplyTo?: string;
   references?: string;
+  openTrackPixelUrl?: string;
 }): Promise<string> => {
   const from = requireEnv('GMAIL_FROM');
-  const { plain, html, unsubUrl } = buildBodies({ to: opts.to, body: opts.body });
+  const { plain, html, unsubUrl } = buildBodies({
+    to: opts.to,
+    body: opts.body,
+    openTrackPixelUrl: opts.openTrackPixelUrl,
+  });
   // Self-generated Message-ID so we can return it immediately and downstream
   // reply matching can compare it against parsed In-Reply-To / References.
   const messageId = `${randomUUID()}@${MESSAGE_ID_DOMAIN}`;
