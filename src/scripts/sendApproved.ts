@@ -7,13 +7,17 @@
 // us under Gmail's per-second send quota and gives HubSpot's
 // engagement-create rate limit headroom too; voicemail Twilio calls
 // inherit the same pace, which is plenty for the lookups/calls APIs.
+//
+// Voicemail sends do NOT depend on Gmail credentials — only email kinds do.
 
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { sendApprovedDraft } from '../outreach/sender.js';
+import { hasGmailCredentials } from '../shared/gmail.js';
 
 const PACING_MS = 200;
+const VOICEMAIL_KINDS = new Set(['voicemail', 'voicemail-2']);
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -21,17 +25,10 @@ const prisma = new PrismaClient({
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+const isVoicemailKind = (kind: string): boolean => VOICEMAIL_KINDS.has(kind);
+
 const main = async (): Promise<void> => {
-  if (!process.env.GMAIL_REFRESH_TOKEN) {
-    await prisma.auditLog.create({ data: {
-      action: 'cron.skipped',
-      entity: 'sendApproved',
-      entityId: null,
-      meta: { reason: 'GMAIL_REFRESH_TOKEN not set — manual-send phase' },
-    } });
-    console.log(JSON.stringify({ status: 'skipped', reason: 'no Gmail credentials yet' }));
-    return;
-  }
+  const gmailReady = hasGmailCredentials();
 
   try {
     const drafts = await prisma.draft.findMany({
@@ -39,13 +36,18 @@ const main = async (): Promise<void> => {
         status: 'approved',
         sentAt: null,
       },
-      select: { id: true },
+      select: { id: true, kind: true },
       orderBy: { createdAt: 'asc' },
     });
 
     let ok = 0;
     let fail = 0;
+    let skippedEmail = 0;
     for (const draft of drafts) {
+      if (!isVoicemailKind(draft.kind) && !gmailReady) {
+        skippedEmail += 1;
+        continue;
+      }
       try {
         await sendApprovedDraft(draft.id);
         ok += 1;
@@ -61,12 +63,30 @@ const main = async (): Promise<void> => {
       await sleep(PACING_MS);
     }
 
+    if (!gmailReady && skippedEmail > 0) {
+      await prisma.auditLog.create({ data: {
+        action: 'cron.skipped',
+        entity: 'sendApproved',
+        entityId: null,
+        meta: {
+          reason: 'GMAIL credentials incomplete — email drafts left approved',
+          skippedEmail,
+        },
+      } });
+    }
+
     await prisma.auditLog.create({ data: {
       action: 'cron.success',
       entity: 'sendApproved',
-      meta: { total: drafts.length, ok, fail },
+      meta: {
+        total: drafts.length,
+        ok,
+        fail,
+        skippedEmail,
+        gmailReady,
+      },
     } });
-    console.log(JSON.stringify({ total: drafts.length, ok, fail }));
+    console.log(JSON.stringify({ total: drafts.length, ok, fail, skippedEmail, gmailReady }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await prisma.auditLog.create({ data: {

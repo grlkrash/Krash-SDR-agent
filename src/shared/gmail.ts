@@ -17,6 +17,14 @@ const requireEnv = (name: string): string => {
   return v;
 };
 
+/** True when Gmail OAuth env is present — email sends and reply polling only. */
+export const hasGmailCredentials = (): boolean => {
+  const id = process.env.GMAIL_CLIENT_ID?.trim() ?? '';
+  const secret = process.env.GMAIL_CLIENT_SECRET?.trim() ?? '';
+  const refresh = process.env.GMAIL_REFRESH_TOKEN?.trim() ?? '';
+  return id !== '' && secret !== '' && refresh !== '';
+};
+
 const buildOAuthClient = (): OAuth2Client => {
   const client = new google.auth.OAuth2({
     clientId: requireEnv('GMAIL_CLIENT_ID'),

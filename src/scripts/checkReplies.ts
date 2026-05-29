@@ -10,20 +10,21 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { checkReplies } from '../outreach/replyWatcher.js';
+import { hasGmailCredentials } from '../shared/gmail.js';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
 });
 
 const main = async (): Promise<void> => {
-  if (!process.env.GMAIL_REFRESH_TOKEN) {
+  if (!hasGmailCredentials()) {
     await prisma.auditLog.create({ data: {
       action: 'cron.skipped',
       entity: 'checkReplies',
       entityId: null,
-      meta: { reason: 'GMAIL_REFRESH_TOKEN not set — manual-send phase' },
+      meta: { reason: 'Gmail OAuth env incomplete (GMAIL_CLIENT_ID/SECRET/REFRESH_TOKEN)' },
     } });
-    console.log(JSON.stringify({ status: 'skipped', reason: 'no Gmail credentials yet' }));
+    console.log(JSON.stringify({ status: 'skipped', reason: 'Gmail credentials incomplete' }));
     return;
   }
 

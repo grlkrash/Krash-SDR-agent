@@ -21,6 +21,7 @@ import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
 import { isLandline, twilio } from '../shared/twilio.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
+import { isSmokeTestLead } from '../shared/smokeTestLead.js';
 import { isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
 
 const HUBSPOT_EMAIL_DIRECTION = 'EMAIL';
@@ -183,7 +184,17 @@ const dropVoicemailViaTwilio = async (
   // Re-check line type at send time (vm-1 and vm-2). Prerecorded voicemail to
   // wireless without consent violates 47 U.S.C. § 227(b)(1)(A). Vm-2 skips the
   // draft-time lookup; numbers can port or be misclassified between draft and send.
-  const landline = await isLandline(phoneE164);
+  // SMOKE_TEST_LEAD_ID bypasses this gate so the operator can validate Twilio AMD
+  // on their own cell — never set that env var to a production lead id.
+  const lookupLandline = await isLandline(phoneE164);
+  const landline = lookupLandline || isSmokeTestLead(lead.id);
+  if (isSmokeTestLead(lead.id) && !lookupLandline) {
+    await audit('sender.smoke-test-landline-bypass', draft.id, {
+      leadId: lead.id,
+      phoneE164,
+      kind: draft.kind,
+    });
+  }
   if (!landline) {
     await prisma.draft.update({
       where: { id: draft.id },
@@ -202,7 +213,7 @@ const dropVoicemailViaTwilio = async (
   // window opens — no extra operator action needed.
   if (draft.kind === 'voicemail') {
     const window = isVm1SendWindowOpen(lead.state);
-    if (!window.allowed) {
+    if (!window.allowed && !isSmokeTestLead(lead.id)) {
       await audit('sender.voicemail-deferred-send-window', draft.id, {
         leadId: lead.id,
         state: lead.state,
