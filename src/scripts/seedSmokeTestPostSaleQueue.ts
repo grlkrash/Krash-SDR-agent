@@ -5,6 +5,7 @@
 //
 // Usage:
 //   SMOKE_TEST_LEAD_ID=... npx tsx src/scripts/seedSmokeTestPostSaleQueue.ts
+//   FORCE_NEW_RENEWAL=true npx tsx ...  — fresh pending renewal (bypasses 60d cooldown)
 //   ... RUN_VM_PIPELINE=true VM_AI_AUTO_SEND=true npx tsx ...
 
 import 'dotenv/config';
@@ -21,6 +22,12 @@ import {
   REACTIVATION_SYSTEM,
   buildReactivationUser,
 } from '../prompts/reactivation.js';
+import {
+  RENEWAL_WARNING_SYSTEM,
+  buildRenewalUser,
+} from '../prompts/renewalWarning.js';
+import { appendPhoneConsentOffer } from '../shared/phoneConsentFooter.js';
+import { parseContractTermMonths, parseHsDate } from '../shared/dealRenewal.js';
 
 const DEFAULT_SMOKE_LEAD_ID = 'cmppuywni0000lyw4v7cormbt';
 const MODEL = 'claude-sonnet-4-5-20250929';
@@ -29,6 +36,11 @@ const TEMPERATURE = 0.7;
 const MS_PER_DAY = 86_400_000;
 const REACTIVATION_KIND = 'reactivation';
 const RENEWAL_KIND = 'renewal';
+const TIER_PRICES = { claimed: 600, select: 2400, premium: 9600 } as const;
+type Tier = keyof typeof TIER_PRICES;
+
+const isTier = (s: string | null | undefined): s is Tier =>
+  s === 'claimed' || s === 'select' || s === 'premium';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -48,6 +60,7 @@ const audit = (
   prisma.auditLog.create({ data: { action, entity: 'seedSmokeTest', entityId, meta } });
 
 const leadId = (process.env.SMOKE_TEST_LEAD_ID?.trim() ?? DEFAULT_SMOKE_LEAD_ID);
+const forceNewRenewal = process.env.FORCE_NEW_RENEWAL === 'true';
 
 const lead = await prisma.lead.findUnique({
   where: { id: leadId },
@@ -91,19 +104,76 @@ await hsRetry(() =>
 );
 console.log(JSON.stringify({ step: 'renewal-deal-staged', dealId: renewalDeal.id }));
 
+if (forceNewRenewal) {
+  const reset = await prisma.draft.updateMany({
+    where: { leadId, kind: RENEWAL_KIND, status: { in: ['pending', 'approved'] } },
+    data: { status: 'rejected', rejectReason: 'smoke-test-reset' },
+  });
+  console.log(JSON.stringify({ step: 'renewal-draft-reset', count: reset.count }));
+}
+
 const recentRenewal = await prisma.draft.findFirst({
   where: { leadId, kind: RENEWAL_KIND, createdAt: { gte: new Date(Date.now() - 60 * MS_PER_DAY) } },
   select: { id: true, status: true },
 });
 let renewalDraftId = recentRenewal?.id ?? null;
-if (recentRenewal === null) {
-  await generateRenewalWarnings();
-  const created = await prisma.draft.findFirst({
-    where: { leadId, kind: RENEWAL_KIND, status: 'pending' },
-    orderBy: { createdAt: 'desc' },
-    select: { id: true },
-  });
-  renewalDraftId = created?.id ?? null;
+if (recentRenewal === null || forceNewRenewal) {
+  if (forceNewRenewal) {
+    const renewalDateRaw = renewalDeal.properties.ss_renewal_date ?? null;
+    const renewalDate = parseHsDate(renewalDateRaw);
+    if (renewalDate === null) throw new Error('Staged renewal deal missing ss_renewal_date');
+    const tierCandidate =
+      renewalDeal.properties.ss_product_type ?? enrichment.expectedProduct ?? null;
+    if (!isTier(tierCandidate)) {
+      throw new Error(`Cannot resolve tier for smoke renewal: ${String(tierCandidate)}`);
+    }
+    const tier: Tier = tierCandidate;
+    const userPrompt = buildRenewalUser(
+      {
+        name: renewalDeal.properties.dealname ?? lead.name,
+        productType: renewalDeal.properties.ss_product_type ?? null,
+      },
+      lead,
+      enrichment,
+      renewalDate,
+      parseContractTermMonths(renewalDeal.properties.ss_contract_term_months),
+      tier,
+      TIER_PRICES[tier],
+    );
+    const msg = await claude.messages.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      temperature: 0.6,
+      system: cached(RENEWAL_WARNING_SYSTEM),
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+    const gen = GenSchema.parse(extractJSON(msg));
+    const body =
+      lead.phoneE164 !== null && !lead.priorWrittenConsent
+        ? appendPhoneConsentOffer(gen.body, lead.id)
+        : gen.body;
+    const draft = await prisma.draft.create({
+      data: {
+        leadId,
+        kind: RENEWAL_KIND,
+        subject: gen.subject,
+        body,
+        specificFacts: [],
+        status: 'pending',
+      },
+    });
+    renewalDraftId = draft.id;
+    await audit('renewal.drafted', renewalDeal.id, { draftId: draft.id, smoke: true, forceNewRenewal: true });
+    console.log(JSON.stringify({ step: 'renewal-draft-created', draftId: draft.id }));
+  } else {
+    await generateRenewalWarnings();
+    const created = await prisma.draft.findFirst({
+      where: { leadId, kind: RENEWAL_KIND, status: 'pending' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    renewalDraftId = created?.id ?? null;
+  }
 }
 console.log(JSON.stringify({ step: 'renewal-draft', draftId: renewalDraftId }));
 

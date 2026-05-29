@@ -1,7 +1,7 @@
 // PEWC opt-in block appended to renewal / reactivation emails for clients
 // with an active deal relationship. Click-through sets Lead.priorWrittenConsent.
 
-import { isHtmlBody } from './emailHtml.js';
+import { isHtmlBody, plainTextToHtmlFragment } from './emailHtml.js';
 import { signPhoneConsentToken } from './phoneConsentToken.js';
 
 const requirePublicUrl = (): string => {
@@ -32,6 +32,11 @@ const HTML_CONSENT_BLOCK = (url: string): string => {
 export const appendPhoneConsentOffer = (body: string, leadId: string): string => {
   const url = buildPhoneConsentUrl(leadId);
   const trimmed = body.trim();
-  if (isHtmlBody(trimmed)) return `${trimmed}${HTML_CONSENT_BLOCK(url)}`;
-  return `${trimmed}${PLAIN_CONSENT_BLOCK(url)}`;
+  // HTML footer so /queue preview and Gmail HTML part show "opt in here" as a link.
+  const htmlBody = isHtmlBody(trimmed) ? trimmed : plainTextToHtmlFragment(trimmed);
+  return `${htmlBody}${HTML_CONSENT_BLOCK(url)}`;
 };
+
+/** Plain-text consent block — used when exporting or deriving text/plain from HTML. */
+export const plainPhoneConsentBlock = (leadId: string): string =>
+  PLAIN_CONSENT_BLOCK(buildPhoneConsentUrl(leadId));

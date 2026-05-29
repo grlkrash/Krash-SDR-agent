@@ -130,9 +130,19 @@ const SignalsSchema = z
 
 const PainPointsSchema = z.record(z.string(), z.boolean());
 
+const SendToEmailSchema = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+  z.string().email().optional(),
+);
+
 const ApproveBodySchema = z.object({
   subject: z.string().optional(),
   body: z.string().optional(),
+  sendToEmail: SendToEmailSchema,
+});
+
+const UpdateSendAddressBodySchema = z.object({
+  sendToEmail: z.string().trim().email(),
 });
 
 const RejectBodySchema = z.object({
@@ -327,21 +337,77 @@ const renderKindBadge = (kind: string): string => {
   return `<span class="badge gray">${escapeHtml(kind)}</span>`;
 };
 
-const renderSendToLine = (enr: Enrichment | null, lead: Lead): string => {
+const resolveSendTarget = (
+  enr: Enrichment | null,
+  lead: Lead,
+): { email: string | null; isGuessed: boolean } => {
   const verified = enr?.ownerEmail?.trim() ?? '';
-  const target = verified !== '' ? verified : guessEmail(enr?.ownerName ?? null, lead.website);
-  if (target === null) {
+  if (verified !== '') return { email: verified, isGuessed: false };
+  const guessed = guessEmail(enr?.ownerName ?? null, lead.website);
+  return { email: guessed, isGuessed: guessed !== null };
+};
+
+const renderSendToDisplay = (enr: Enrichment | null, lead: Lead): string => {
+  const { email, isGuessed } = resolveSendTarget(enr, lead);
+  if (email === null) {
     return '<div class="send-to send-to-warn">⚠ No send address — will suppress on send</div>';
   }
-  if (verified !== '') {
-    return `<div class="send-to">Send to: ${escapeHtml(target)}</div>`;
+  if (!isGuessed) {
+    return `<div class="send-to">Send to: ${escapeHtml(email)}</div>`;
   }
-  return `<div class="send-to send-to-warn">Send to: ${escapeHtml(target)} <span class="dim">(guessed — verify before approving)</span></div>`;
+  return `<div class="send-to send-to-warn">Send to: ${escapeHtml(email)} <span class="dim">(guessed — verify before approving)</span></div>`;
+};
+
+const renderSendToField = (enr: Enrichment | null, lead: Lead): string => {
+  const { email, isGuessed } = resolveSendTarget(enr, lead);
+  if (email === null) {
+    return `<div class="send-to-field send-to-warn">
+      <label>Send to</label>
+      <input type="email" name="sendToEmail" value="" placeholder="name@facility.com — required to send" required />
+      <div class="send-to-hint">No address on file — enter the correct email before approving.</div>
+    </div>`;
+  }
+  const warn = isGuessed
+    ? '<div class="send-to-hint send-to-warn">Guessed address — correct it here if you have a better one.</div>'
+    : '<div class="send-to-hint">Override only if you need a different recipient.</div>';
+  return `<div class="send-to-field${isGuessed ? ' send-to-warn' : ''}">
+      <label>Send to</label>
+      <input type="email" name="sendToEmail" value="${escapeHtml(email)}" autocomplete="email" />
+      ${warn}
+    </div>`;
+};
+
+const renderApprovedSendToFix = (enr: Enrichment | null, lead: Lead): string => {
+  const verified = enr?.ownerEmail?.trim() ?? '';
+  if (verified !== '') return '';
+  const { email } = resolveSendTarget(enr, lead);
+  if (email === null) return '';
+  return `<form method="POST" action="/update-send-address/${encodeURIComponent(lead.id)}" class="send-to-fix-form">
+      <label>Correct send address before auto-send</label>
+      <div class="send-to-fix-row">
+        <input type="email" name="sendToEmail" value="${escapeHtml(email)}" required autocomplete="email" />
+        <button type="submit" class="btn btn-send-to-fix">Save address</button>
+      </div>
+    </form>`;
+};
+
+const persistSendToEmail = async (leadId: string, sendToEmail: string): Promise<void> => {
+  await prisma.enrichment.upsert({
+    where: { leadId },
+    update: { ownerEmail: sendToEmail },
+    create: {
+      leadId,
+      ownerEmail: sendToEmail,
+      painPoints: {},
+      signals: {},
+    },
+  });
 };
 
 const renderHeader = (
   d: DraftWithRel,
   tempBadge: LeadTemperatureBadge | undefined,
+  opts?: { omitSendTo?: boolean },
 ): string => {
   const enr = d.lead.enrichment;
   const tier = safeTier(enr?.expectedProduct ?? null);
@@ -371,7 +437,7 @@ const renderHeader = (
     </div>
     <div class="owner">${renderOwnerLine(enr)}${renderPrepBriefLink(d.lead)}</div>
     ${renderPhoneLine(d.lead, d.kind)}
-    ${renderSendToLine(enr, d.lead)}
+    ${opts?.omitSendTo === true ? '' : renderSendToDisplay(enr, d.lead)}
     ${painsHtml}
     ${signalsHtml}
     <div class="badges">
@@ -459,8 +525,9 @@ const renderPendingCard = (
 
   return `
   <div class="card">
-    ${renderHeader(d, badge)}
+    ${renderHeader(d, badge, { omitSendTo: true })}
     <form method="post" action="${approveAction}" class="draft-form">
+      ${renderSendToField(d.lead.enrichment, d.lead)}
       <input type="text" name="subject" value="${escapeHtml(subject)}" placeholder="(no subject — voicemail or call)" />
       ${renderEmailEditor(d.body)}
       <input type="text" name="reason" placeholder="reject reason (only sent with Reject)" />
@@ -505,6 +572,7 @@ const renderApprovedCard = (
   return `
   <div class="card approved-card">
     ${renderHeader(d, badge)}
+    ${renderApprovedSendToFix(d.lead.enrichment, d.lead)}
     <div class="approved-email">
       <div class="email-field">
         <div class="email-label">Subject</div>
@@ -671,6 +739,14 @@ const STYLE = `
   .owner { color: #374151; font-size: 14px; margin-top: 4px; }
   .send-to { font-size: 13px; margin-top: 6px; color: #374151; }
   .send-to-warn { color: #b45309; }
+  .send-to-field { margin-top: 8px; }
+  .send-to-field label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+  .send-to-hint { font-size: 12px; color: #6b7280; margin-top: 4px; }
+  .send-to-fix-form { margin-top: 10px; padding: 10px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; }
+  .send-to-fix-form label { display: block; font-size: 13px; font-weight: 600; color: #92400e; margin-bottom: 6px; }
+  .send-to-fix-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .send-to-fix-row input[type=email] { flex: 1; min-width: 200px; box-sizing: border-box; font-family: inherit; font-size: 14px; padding: 8px; border: 1px solid #d4d4d8; border-radius: 6px; }
+  .btn-send-to-fix { background: #d97706; color: white; font-size: 13px; padding: 8px 12px; border-radius: 6px; border: none; cursor: pointer; font-weight: 500; }
   .dim { color: #9ca3af; }
   .pains, .badges { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
   .signals { margin-top: 8px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: #374151; }
@@ -1133,7 +1209,14 @@ queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
   }
   const existing = await prisma.draft.findUnique({
     where: { id },
-    select: { subject: true, body: true, status: true, kind: true },
+    select: {
+      subject: true,
+      body: true,
+      status: true,
+      kind: true,
+      leadId: true,
+      lead: { select: { website: true, enrichment: { select: { ownerEmail: true, ownerName: true } } } },
+    },
   });
   if (existing === null) {
     res.status(404).json({ error: 'not found' });
@@ -1148,6 +1231,17 @@ queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
   const normalizedBody =
     parsed.data.body !== undefined ? normalizeApprovedBody(parsed.data.body) : undefined;
   const bodyChanged = normalizedBody !== undefined && normalizedBody !== existing.body;
+  let sendToEmailUpdated = false;
+  let sendToEmail: string | undefined;
+  if (parsed.data.sendToEmail !== undefined) {
+    sendToEmail = parsed.data.sendToEmail.trim();
+    const enr = existing.lead.enrichment;
+    const currentVerified = enr?.ownerEmail?.trim().toLowerCase() ?? '';
+    if (currentVerified !== sendToEmail.toLowerCase()) {
+      await persistSendToEmail(existing.leadId, sendToEmail);
+      sendToEmailUpdated = true;
+    }
+  }
   const update: Prisma.DraftUpdateInput = {
     status: 'approved',
     approvedBy: 'sonia',
@@ -1164,11 +1258,45 @@ queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
         approvedBy: 'sonia',
         subjectChanged,
         bodyChanged,
+        sendToEmailUpdated,
+        ...(sendToEmailUpdated && sendToEmail !== undefined ? { sendToEmail } : {}),
         previousStatus: existing.status,
       },
     },
   });
   res.redirect(303, '/queue');
+});
+
+queueRouter.post('/update-send-address/:id', queueAuth, async (req, res) => {
+  const leadId = readId(req);
+  if (leadId === null) {
+    res.status(400).json({ error: 'invalid id' });
+    return;
+  }
+  const parsed = UpdateSendAddressBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid email' });
+    return;
+  }
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    select: { id: true },
+  });
+  if (lead === null) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const sendToEmail = parsed.data.sendToEmail.trim().toLowerCase();
+  await persistSendToEmail(leadId, sendToEmail);
+  await prisma.auditLog.create({
+    data: {
+      action: 'queue.send-address-updated',
+      entity: 'lead',
+      entityId: leadId,
+      meta: { sendToEmail },
+    },
+  });
+  res.redirect(303, '/queue?lane=approved');
 });
 
 queueRouter.post('/mark-manual-vm/:id', queueAuth, async (req, res) => {
