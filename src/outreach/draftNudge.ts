@@ -1,6 +1,6 @@
 // Nudge drafter. Pulls the most recent sent/paused draft for a lead, hands
 // its body to Claude as "tone reference," and produces a short follow-up.
-// No evaluator pass: nudges are 60 words max and approval-gated through
+// No evaluator pass: nudges are ~90–120 words and approval-gated through
 // /queue, so the score loop's marginal benefit doesn't justify the second
 // Claude call.
 
@@ -17,7 +17,7 @@ const cached = (text: string): Array<TextBlockParam> => [
 ];
 
 const MODEL = 'claude-sonnet-4-5-20250929';
-const MAX_TOKENS = 512;
+const MAX_TOKENS = 1024;
 const TEMPERATURE = 0.6;
 
 const prisma = new PrismaClient({

@@ -9,7 +9,16 @@ import type { Enrichment, Lead, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { getBookingLink } from '../shared/bookingLink.js';
 
-export const NUDGE_SYSTEM = `Write a short check-in to a treatment-center prospect we recently corresponded with but who has gone quiet. Reference the prior thread vaguely ('after our chat last week', 'following up on my note'). One specific value-prop hook tied to a known fact about THEIR facility (named missing directory, hiring role, detected tech, owner name). End with a clear ask: when a BOOKING LINK is provided in the user message, close with a soft ask to book and paste that URL once as plain text; otherwise a 15-min call ask OR a yes/no question. 60 words max. No greeting fluff. No 'just checking in'. No pricing, no tier names ('Claimed', 'Select', 'Premium'), no dollar amounts.
+export const NUDGE_SYSTEM = `Write a follow-up check-in to a treatment-center prospect we recently corresponded with but who has gone quiet. Reference the prior thread vaguely ('following up on my note', 'wanted to see if you had a chance to review').
+
+Structure:
+1. Brief follow-up opener (1 sentence).
+2. Remind them what Sobriety Select does in plain language: we help facilities connect with individuals and families actively searching for care, with rich profiles (insurance, services, reviews) so inquiries are better aligned.
+3. ONE specific hook tied to a known fact about THEIR facility (named missing directory, hiring role, detected tech, owner name, review count, city).
+4. Soft demo framing: even a quick 10–15 minute look can show what families in their market see and whether it fits their intake goals.
+5. Clear CTA: when a BOOKING LINK is provided in the user message, close with a soft ask to book and paste that URL once as plain text; otherwise offer calendar options OR a yes/no question.
+
+90–120 words. Two short paragraphs. No greeting fluff ('Hope this finds you well'). No 'just checking in' as the whole email. No pricing, no tier names ('Claimed', 'Select', 'Premium'), no dollar amounts.
 
 Output ONLY valid JSON. No preamble, no markdown fences. Schema: { "subject": string, "body": string }`;
 
