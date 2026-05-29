@@ -7,12 +7,12 @@
 
 **Changes from v1.6 (May 29, 2026):**
 
-- **Engagement dashboard on `/queue` (§9.5).** Aggregate **open rate** and **reply rate** (all-time) displayed at the top of the approval queue, with an expandable breakdown by email type (cold, follow-up 1–4, nudge, reactivation, renewal, etc.). Per-lead **temperature badges** (Hot / Warm / Cool / Cold) on draft cards and awaiting-reply rows link to a lead-level engagement detail page with send history and a suggested approach hint. JSON API at `GET /queue/engagement-stats` for programmatic access. Reply rate is sourced from `AuditLog 'reply.draft-created'` (`meta.matchedDraftId` / `meta.matchedDraftKind`); open rate uses HubSpot email `hs_email_open_count` on `Draft.hubspotEmailId` plus contact `hs_email_last_open_date` within 30 days of send (Gmail sends may under-report — see §9.5). Stats cached 5 minutes in-process.
+- **Engagement dashboard on `/queue` (§9.5).** Aggregate **open rate** and **reply rate** (all-time) displayed at the top of the approval queue, with an expandable breakdown by email type (cold, follow-up 1–4, nudge, reactivation, renewal, etc.). Per-lead **temperature badges** (Hot / Warm / Cool / Cold) on draft cards and awaiting-reply rows link to a lead-level engagement detail page with send history and a suggested approach hint. JSON API at `GET /queue/engagement-stats` for programmatic access. Reply rate from `AuditLog 'reply.draft-created'`; **open rate from first-party tracking pixels** (`AuditLog 'email.opened'`, v1.7.1). Stats cached 5 minutes in-process.
 
 **Changes from v1.5 (May 29, 2026):**
 
 - **Renewal vs reactivation post-sale split (§9.9, §9.10).** **Renewals** (`kind='renewal'`) are **live-call only** — no AI voicemail. When a renewal email sends, SSA flags the lead for Sonia: HubSpot tasks (touch 1 due **3 business days** after send), up to **5 call touches on BD 3–7**, `/renewals-call` operator queue, compact section on `/queue`, and a **5 PM brief** section. **`renewalCallFollowups`** (8:00 AM ET) creates due touch tasks and expires sequences after BD 7. **Reactivations** (`kind='reactivation'`) remain email + optional **consent-gated machine-only AI vm** (see below). Cold-prospect vm is off.
-- **Consent-gated reactivation VM (§9.9).** `dropVoicemails` triggers only after a **sent reactivation** email and `Lead.priorWrittenConsent=true` (PEWC click-through on `/consent-phone` appended to renewal/reactivation emails). Twilio AMD: **machine → play MP3** with deterministic artificial-voice disclosures; **human → hang up** (no live bridge). Auto-send requires `VM_AI_AUTO_SEND=true` on web + cron; reactivation vm drafts auto-approve when that flag is set. Operator smoke test: `SMOKE_TEST_LEAD_ID` bypasses landline at draft + send time; `seedSmokeTestPostSaleQueue.ts` seeds queue fixtures.
+- **Consent-gated reactivation VM (§9.9).** `dropVoicemails` triggers only after a **sent reactivation** email and `Lead.priorWrittenConsent=true` (PEWC click-through on `/consent-phone` appended to renewal/reactivation emails). Twilio AMD: **machine → play MP3** with deterministic artificial-voice disclosures; **human → honest Twilio `<Say>` disclosure then live bridge to Sonia** (prep brief email + whisper; no conversational AI agent). Auto-send requires `VM_AI_AUTO_SEND=true` on web + cron; reactivation vm drafts auto-approve when that flag is set. Operator smoke test: `SMOKE_TEST_LEAD_ID` bypasses landline at draft + send time; `seedSmokeTestPostSaleQueue.ts` seeds queue fixtures.
 - **Approval queue triage (§9.5).** `/queue` gains a top **triage strip** (counts + deep links), **lane filters** on pending (All / Post-sale / Sequence / Replies / Voicemail), **phone line** on post-sale cards, and a **Renewals to call** preview linking to `/renewals-call`. `/manual-vm-queue` unchanged for state-law restricted leads.
 - **Inbound compliance (§12).** STOP/unsubscribe replies auto-suppress; inbound Twilio calls forward to `SONIA_PHONE`.
 
@@ -72,7 +72,7 @@ Build a single Node.js/TypeScript service that automates 80% of the SDR workflow
 No AI ever sends an email or makes a phone call without Sonia’s explicit approval, with these **exceptions**:
 
 1. Automated no-reply follow-up touches 2–5 in a pre-approved sequence.
-2. **Reactivation AI voicemail** — only when `VM_AI_AUTO_SEND=true` (counsel-approved), `Lead.priorWrittenConsent=true`, a sent **reactivation** email exists, and Twilio AMD detects a **machine** (human answers are hung up, not bridged).
+2. **Reactivation AI voicemail** — only when `VM_AI_AUTO_SEND=true` (counsel-approved), `Lead.priorWrittenConsent=true`, a sent **reactivation** email exists, and Twilio AMD detects a **machine** (human answers get an honest automated disclosure + live bridge to Sonia, not a conversational AI agent).
 
 -----
 
@@ -487,14 +487,14 @@ Only buckets with at least one send appear in the table — the panel stays comp
 **Rate inputs.**
 
 - **Reply rate (reliable).** Numerator = distinct outbound sends that received an inbound reply, attributed via `AuditLog` rows where `action='reply.draft-created'` and `meta.matchedDraftId` points at the sent draft. Denominator = count of sent email drafts in that bucket. This reuses the same dedup boundary as §9.7 (`Draft.inboundGmailMessageId @unique` on the resulting `kind='replied'` draft).
-- **Open rate (best-effort).** A send counts as “opened” when **either** (a) the HubSpot Email engagement stored on `Draft.hubspotEmailId` has `hs_email_open_count > 0`, **or** (b) the associated HubSpot contact’s `hs_email_last_open_date` falls within **30 days after** that draft’s `sentAt`. Because outbound mail goes through **Gmail API** (§9.6), HubSpot tracking pixels are not injected — open counts on logged CRM emails are often zero even when the prospect read the message. The panel surfaces a footnote when HubSpot returns no open data. Reply rate remains the primary actionable signal; open rate is a **temperature hint**, not a billing-grade metric.
+- **Open rate (tracking pixel, v1.7.1).** Every email sent via `sendApproved` → `sender.ts` embeds a signed 1×1 pixel (`GET /track/open/:draftId?sig=…`) in the HTML part. The route returns a transparent GIF and writes `AuditLog 'email.opened'` once per draft (deduped). Signature uses `OPEN_TRACK_SECRET` (falls back to `UNSUBSCRIBE_SECRET`). Opens count toward the dashboard when the pixel loads — **not** a guaranteed read. Image-blocked clients under-report; Apple Mail Privacy Protection may inflate counts. Emails marked **Sent manually** from Gmail (`/mark-sent`) do not carry the pixel. Reply rate remains the primary actionable signal.
 
 **Per-lead temperature.** Draft cards (pending + approved), and rows in the **💤 Sent — awaiting reply** section, show a clickable badge when the lead has prior sends:
 
 | Badge | Rule | Operator hint |
 | --- | --- | --- |
 | **Hot — replied** | At least one inbound reply recorded | Prioritize thoughtful reply or call; skip generic sequence templates |
-| **Warm — opened** | HubSpot open signal, no reply yet | Shorter nudge with one clear ask, or a different pain-point angle |
+| **Warm — opened** | Tracking pixel loaded, no reply yet | Shorter nudge with one clear ask, or a different pain-point angle |
 | **Cool — awaiting signal** | 1–2 sends, no open/reply yet | Stay on sequence timing unless awaiting-reply window triggers nudge |
 | **Cold — no engagement** | 3+ sends, no open or reply | Consider pausing sequence, nudge, or alternate channel |
 
@@ -506,7 +506,7 @@ Clicking a badge opens **`GET /queue/lead-engagement/:leadId`** — a server-ren
 - `GET /queue/engagement-stats?leadId={id}` → single-lead `LeadEngagementSummary`.
 - `GET /queue/engagement-stats?refresh=1` → bypass the 5-minute in-process cache (HubSpot round-trips on refresh).
 
-Implementation: `src/outreach/emailEngagementStats.ts` (aggregation + HubSpot fetch), `src/ui/engagementDashboard.ts` (HTML fragments). No schema change — stats are derived from existing `Draft`, `AuditLog`, and HubSpot properties.
+Implementation: `src/outreach/emailEngagementStats.ts` (aggregation), `src/ui/engagementDashboard.ts` (HTML), `src/shared/openTrackToken.ts` + `src/routes/openTrack.ts` (pixel). No schema change — opens live in `AuditLog`.
 
 **Specialized operator queues (v1.6).**
 
@@ -515,6 +515,7 @@ Implementation: `src/outreach/emailEngagementStats.ts` (aggregation + HubSpot fe
 | `/queue` | Email draft review + triage + engagement dashboard |
 | `/queue/lead-engagement/:leadId` | Per-lead send history, open/reply flags, temperature + approach hint |
 | `/queue/engagement-stats` | JSON engagement overview (optional `?leadId=`, `?refresh=1`) |
+| `/track/open/:draftId` | Signed 1×1 pixel — logs `email.opened` to AuditLog (no auth) |
 | `/renewals-call` | Live renewal calls — 5 touches on BD 3–7, HubSpot task mirror |
 | `/manual-vm-queue` | State-law restricted leads (FL, OK, WA, IN, MA, TX, CA) — human-placed vm/call |
 
@@ -552,7 +553,7 @@ Scoring unchanged from v1.1 (sorts by `score × expectedCommission`).
 
 **Scope (v1.6).** AI voicemail applies **only** to **reactivation** prospects who have opted in via **prior express written consent (PEWC)** after a sent reactivation email. **Renewals never receive AI vm** — they use the live-call cadence in §9.10. **Cold-prospect vm is off.**
 
-**What this is.** A standard Twilio outbound call with Answering Machine Detection (`DetectMessageEnd`, 30s timeout). The callee's phone **rings**. If Twilio classifies the answer as a machine (voicemail greeting + beep), Twilio plays a pre-rendered ElevenLabs MP3 (`eleven_multilingual_v2`) wrapped with **deterministic artificial-voice + opt-out disclosures** (`wrapVoicemailScript`). If a **human** answers, Twilio **hangs up** — no live bridge, no conversational AI agent.
+**What this is.** A standard Twilio outbound call with Answering Machine Detection (`DetectMessageEnd`, 30s timeout). The callee's phone **rings**. If Twilio classifies the answer as a machine (voicemail greeting + beep), Twilio plays a pre-rendered ElevenLabs MP3 (`eleven_multilingual_v2`) wrapped with **deterministic artificial-voice + opt-out disclosures** (`wrapVoicemailScript`). If a **human** answers, Twilio plays a brief **honest automated disclosure** (Twilio `<Say>`, not ElevenLabs — e.g. "This is an automated follow-up from Sobriety Select…") and **bridges to Sonia** on `SONIA_PHONE` with prep brief email + whisper. No conversational AI agent — live conversation is always the real operator.
 
 **What this is not.** Ringless voicemail (RVM) — silent carrier-side injection without ringing — is explicitly out of scope. Live two-way AI voice remains a **V1 non-goal** (§14).
 
@@ -568,14 +569,14 @@ Scoring unchanged from v1.1 (sorts by `score × expectedCommission`).
 
 | Touch | Draft kind | Cron | Send window | Human answers | Machine |
 | --- | --- | --- | --- | --- | --- |
-| 1st | `voicemail` | `dropVoicemails` 2 PM ET | **After-hours only** — outside local Mon–Fri 9 AM–6 PM, or anytime Sat/Sun (`isVm1SendWindowOpen`) | **Hang up** | Play MP3 after beep |
-| 2nd | `voicemail-2` | `runSecondCalls` (~3 business days after vm-1 dropped) | Anytime within TCPA hours | **Hang up** | Play MP3 after beep |
+| 1st | `voicemail` | `dropVoicemails` 2 PM ET | **After-hours only** — outside local Mon–Fri 9 AM–6 PM, or anytime Sat/Sun (`isVm1SendWindowOpen`) | **Say + bridge to Sonia** | Play MP3 after beep |
+| 2nd | `voicemail-2` | `runSecondCalls` (~3 business days after vm-1 dropped) | Anytime within TCPA hours | **Say + bridge to Sonia** | Play MP3 after beep |
 
 **Inbound callbacks.** `POST /webhook/twilio/inbound` forwards callers on the Twilio number to `SONIA_PHONE` (live operator, not AI).
 
 **Operator smoke test.** Set `SMOKE_TEST_LEAD_ID` to the test `Lead.id` on web + cron. Run `npx tsx src/scripts/seedSmokeTestPostSaleQueue.ts` to stage renewal + reactivation queue fixtures; `RUN_VM_PIPELINE=true VM_AI_AUTO_SEND=true` exercises the full reactivation → consent → vm path.
 
-**v1.5 note (superseded).** Vm-1/vm-2 human pickup previously bridged to Sonia with prep brief + whisper. v1.6 post-sale vm is **machine-only**; live calls for renewals use §9.10.
+**v1.6 note (revised).** Human pickup on consent-gated reactivation vm uses the same live-bridge path as v1.5 (prep brief + whisper), with an added honest `<Say>` disclosure to the callee before the bridge. Renewals never receive AI vm — live calls use §9.10.
 
 ### 9.10 Post-Sale Workflows — renewal vs reactivation
 
