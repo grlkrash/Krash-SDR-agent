@@ -7,9 +7,9 @@
 //
 // 1. POST /webhook/twilio/twiml?draftId=... — Twilio hits this after AMD
 //    (Answering Machine Detection) completes. Machine → play pre-rendered MP3.
-//    Human on vm-1 or vm-2 → bridge to Sonia (gatekeeper or owner — she
-//    handles live) with prep brief + whisper. This is NOT ringless voicemail;
-//    the callee's phone rings like a normal outbound call.
+//    Human on vm-1 or vm-2 → brief automated disclosure (<Say>), then bridge
+//    to Sonia (gatekeeper or owner — she handles live) with prep brief +
+//    whisper. Machine → play pre-rendered MP3.
 // 2. POST /webhook/twilio/status?draftId=... — call lifecycle status callback;
 //    we log the full body to AuditLog + write a HubSpot CALL engagement.
 // 3. GET /audio/:draftId — serves the raw MP3 buffer Twilio's <Play> verb
@@ -37,6 +37,10 @@ const BRIDGE_TIMEOUT_SECONDS = 20;
 const INBOUND_DIAL_TIMEOUT_SECONDS = 30;
 // Brief pause after AMD before <Play> — gives GV/carrier mailboxes time to enter record mode.
 const PRE_PLAY_PAUSE_SECONDS = 2;
+// Twilio <Say> on human pickup — honest disclosure before live bridge (not ElevenLabs).
+const HUMAN_HANDOFF_SAY =
+  'This is an automated follow-up from Sobriety Select, regarding our recent email. '
+  + 'If you would like to speak with Sonia now, please stay on the line.';
 
 const isVoicemailBridgeKind = (kind: string): kind is VoicemailBridgeKind =>
   kind === 'voicemail' || kind === 'voicemail-2';
@@ -149,7 +153,10 @@ const bridgeHumanToSonia = async (opts: {
 
   const whisperUrl = `${opts.publicUrl}/webhook/twilio/whisper?draftId=${escapeXml(opts.draftId)}`;
   const dialResultUrl = `${opts.publicUrl}/webhook/twilio/dial-result?draftId=${escapeXml(opts.draftId)}`;
-  const twiml = `<Response><Dial timeout="${BRIDGE_TIMEOUT_SECONDS}" answerOnBridge="true" action="${dialResultUrl}"><Number url="${whisperUrl}">${escapeXml(sonia)}</Number></Dial></Response>`;
+  const twiml =
+    `<Response><Say>${escapeXml(HUMAN_HANDOFF_SAY)}</Say>`
+    + `<Dial timeout="${BRIDGE_TIMEOUT_SECONDS}" answerOnBridge="true" action="${dialResultUrl}">`
+    + `<Number url="${whisperUrl}">${escapeXml(sonia)}</Number></Dial></Response>`;
 
   await audit('voicemail.bridge-initiated', opts.draftId, {
     kind: opts.kind,
@@ -208,10 +215,23 @@ twilioRouter.post('/webhook/twilio/twiml', async (req, res) => {
   const answeredBy = body.AnsweredBy ?? '';
   const publicUrl = process.env.PUBLIC_URL ?? '';
 
-  // Human answered — consent-gated reactivation vm is machine-only (no live bridge).
+  if (answeredBy === 'human') {
+    const kind: VoicemailBridgeKind = isVoicemailBridgeKind(draft.kind)
+      ? draft.kind
+      : 'voicemail';
+    await bridgeHumanToSonia({
+      draftId,
+      kind,
+      lead: draft.lead,
+      publicUrl,
+      res,
+    });
+    return;
+  }
+
   if (!answeredBy.startsWith('machine')) {
     const trigger = await getVoicemailDraftTrigger(draftId);
-    await audit('voicemail.human-hangup', draftId, { answeredBy, trigger });
+    await audit('voicemail.amd-no-bridge', draftId, { answeredBy, trigger });
     res.type('text/xml').send('<Response><Hangup/></Response>');
     return;
   }
