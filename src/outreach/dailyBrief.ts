@@ -17,6 +17,11 @@ import {
   countOpenManualVm,
   renderManualVoicemailRequired,
 } from './brief/manualVm.js';
+import {
+  RENEWALS_CALL_BRIEF_LIMIT,
+  renderRenewalsToCall,
+} from './brief/renewalsCall.js';
+import { buildRenewalCallRows, countOpenRenewalCalls } from './renewalCallFlag.js';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -67,6 +72,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     repliesCount,
     meetingsCount,
     openManualVmCount,
+    openRenewalCallCount,
   ] = await Promise.all([
     prisma.score.findMany({
       where: { scoredAt: { gte: cutoff } },
@@ -97,6 +103,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     }),
     countMeetingsBookedSince(cutoff),
     countOpenManualVm(),
+    countOpenRenewalCalls(),
   ]);
 
   const latestScores = dedupeLatestScores(scoreRows);
@@ -126,6 +133,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     since: cutoff,
     limit: MANUAL_VM_BRIEF_LIMIT,
   });
+  const renewalCallRows = await buildRenewalCallRows({ limit: RENEWALS_CALL_BRIEF_LIMIT });
 
   const body = [
     `# 📊 Pipeline brief — ${date}`,
@@ -139,6 +147,8 @@ export const sendDailyBrief = async (): Promise<void> => {
     renderAtRisk(atRiskTop, enriched),
     '',
     renderCallList(callList),
+    '',
+    renderRenewalsToCall(renewalCallRows, publicUrl, openRenewalCallCount),
     '',
     renderManualVoicemailRequired(manualVoicemailRows, publicUrl, openManualVmCount),
     '',

@@ -121,14 +121,17 @@ export const dropVoicemail2 = async (leadId: string): Promise<void> => {
   const triggerDraft = await prisma.draft.findFirst({
     where: {
       leadId,
-      kind: { in: ['renewal', 'reactivation'] },
+      kind: 'reactivation',
       status: { in: ['sent', 'auto-sent'] },
     },
     orderBy: { sentAt: 'desc' },
     select: { kind: true },
   });
-  const trigger: VoicemailTrigger =
-    triggerDraft?.kind === 'reactivation' ? 'reactivation' : 'renewal';
+  if (triggerDraft === null) {
+    await audit('voicemail2.skipped-not-reactivation', leadId, {});
+    return;
+  }
+  const trigger: VoicemailTrigger = 'reactivation';
 
   const msg = await claude.messages.create({
     model: MODEL,
@@ -159,12 +162,13 @@ export const dropVoicemail2 = async (leadId: string): Promise<void> => {
       kind: 'voicemail-2',
       body: script,
       audioMp3: mp3,
-      status: 'pending',
+      status: process.env.VM_AI_AUTO_SEND === 'true' ? 'approved' : 'pending',
     },
   });
   await audit('voicemail2.drafted', leadId, {
     draftId: draft.id,
     scriptLength: script.length,
     audioBytes: mp3.length,
+    trigger,
   });
 };

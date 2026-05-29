@@ -6,6 +6,7 @@ import { queueAuth } from '../middleware/queueAuth.js';
 import { draftNudge } from '../outreach/draftNudge.js';
 import { killLead } from '../outreach/killLead.js';
 import { logSentEmailToHubspot } from '../outreach/logSentEmail.js';
+import { flagRenewalForCall } from '../outreach/renewalCallFlag.js';
 import {
   REPLY_SILENCE_DAYS,
   awaitingReplyLeadWhere,
@@ -1009,7 +1010,7 @@ queueRouter.post('/mark-sent/:id', queueAuth, async (req, res) => {
   }
   const existing = await prisma.draft.findUnique({
     where: { id },
-    select: { leadId: true },
+    select: { leadId: true, kind: true },
   });
   if (existing === null) {
     res.status(404).json({ error: 'not found' });
@@ -1036,6 +1037,9 @@ queueRouter.post('/mark-sent/:id', queueAuth, async (req, res) => {
   // DB-side 'sent' flip so the source of truth is correct even if HubSpot
   // is down.
   await logSentEmailToHubspot(id);
+  if (existing.kind === 'renewal') {
+    await flagRenewalForCall(id);
+  }
   res.redirect(303, '/queue');
 });
 

@@ -27,6 +27,7 @@ import {
   buildWhisperText,
   type VoicemailBridgeKind,
 } from '../shared/prepBriefForCall.js';
+import { getVoicemailDraftTrigger } from '../shared/voicemailDraftTrigger.js';
 
 const CONNECTED = 'connected';
 const NO_ANSWER = 'no-answer';
@@ -207,32 +208,23 @@ twilioRouter.post('/webhook/twilio/twiml', async (req, res) => {
   const answeredBy = body.AnsweredBy ?? '';
   const publicUrl = process.env.PUBLIC_URL ?? '';
 
-  // Machine answered → drop the pre-rendered MP3 (same path for vm-1 and vm-2).
-  if (answeredBy.startsWith('machine')) {
-    const audioUrl = `${publicUrl}/audio/${escapeXml(draftId)}`;
-    await audit('voicemail.machine-play', draftId, {
-      answeredBy,
-      pauseSeconds: PRE_PLAY_PAUSE_SECONDS,
-    });
-    res.type('text/xml').send(
-      `<Response><Pause length="${PRE_PLAY_PAUSE_SECONDS}"/><Play>${audioUrl}</Play></Response>`,
-    );
-    return;
-  }
-
-  // Human answered on vm-1 or vm-2 → bridge to Sonia with prep brief + whisper.
-  if (!isVoicemailBridgeKind(draft.kind)) {
+  // Human answered — consent-gated reactivation vm is machine-only (no live bridge).
+  if (!answeredBy.startsWith('machine')) {
+    const trigger = await getVoicemailDraftTrigger(draftId);
+    await audit('voicemail.human-hangup', draftId, { answeredBy, trigger });
     res.type('text/xml').send('<Response><Hangup/></Response>');
     return;
   }
 
-  await bridgeHumanToSonia({
-    draftId,
-    kind: draft.kind,
-    lead: draft.lead,
-    publicUrl,
-    res,
+  // Machine answered → drop the pre-rendered MP3 (same path for vm-1 and vm-2).
+  const audioUrl = `${publicUrl}/audio/${escapeXml(draftId)}`;
+  await audit('voicemail.machine-play', draftId, {
+    answeredBy,
+    pauseSeconds: PRE_PLAY_PAUSE_SECONDS,
   });
+  res.type('text/xml').send(
+    `<Response><Pause length="${PRE_PLAY_PAUSE_SECONDS}"/><Play>${audioUrl}</Play></Response>`,
+  );
 });
 
 // Played in SONIA's ear before the bridge connects. Twilio's built-in

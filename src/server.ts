@@ -4,6 +4,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { queueRouter } from './ui/queue.js';
 import { manualVmQueueRouter } from './ui/manualVmQueue.js';
+import { renewalsCallRouter } from './ui/renewalsCall.js';
 import { prepBriefRouter } from './ui/prepBrief.js';
 import { copilotRouter } from './ui/copilot.js';
 import { unsubscribeRouter } from './routes/unsubscribe.js';
@@ -116,6 +117,7 @@ app.get('/health', async (_req, res) => {
 
 app.use('/', queueRouter);
 app.use('/', manualVmQueueRouter);
+app.use('/', renewalsCallRouter);
 app.use('/', prepBriefRouter);
 app.use('/', copilotRouter);
 app.use('/', unsubscribeRouter);

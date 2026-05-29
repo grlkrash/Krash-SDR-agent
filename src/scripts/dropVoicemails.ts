@@ -1,8 +1,8 @@
 // tsx src/scripts/dropVoicemails.ts
 //
 // Cron entry: draft a consent-gated vm-1 for leads who opted in to phone
-// contact (Lead.priorWrittenConsent) after a sent renewal or reactivation
-// email. Cold-prospect vm drops are intentionally NOT triggered here.
+// contact (Lead.priorWrittenConsent) after a sent reactivation email.
+// Renewals are live-call only (/renewals-call). Cold vm is NOT triggered here.
 //
 // Idempotent — dropVoicemail() short-circuits if a voicemail draft already
 // exists. Hard cap 50/day; 1s pacing for Twilio Lookups.
@@ -15,7 +15,7 @@ import { dropVoicemail, type VoicemailTrigger } from '../outreach/voicemail.js';
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const DAILY_CAP = 50;
 const PACING_MS = 1_000;
-const CONSENT_TRIGGER_KINDS = ['renewal', 'reactivation'] as const;
+const CONSENT_TRIGGER_KINDS = ['reactivation'] as const;
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -38,7 +38,7 @@ const resolveTrigger = async (
     select: { kind: true },
   });
   if (sent === null) return null;
-  if (sent.kind === 'renewal' || sent.kind === 'reactivation') return sent.kind;
+  if (sent.kind === 'reactivation') return 'reactivation';
   return null;
 };
 

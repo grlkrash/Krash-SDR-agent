@@ -23,6 +23,7 @@ import { isLandline, twilio } from '../shared/twilio.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import { isSmokeTestLead } from '../shared/smokeTestLead.js';
 import { isTcpaCallingHoursOpen, isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
+import { flagRenewalForCall } from './renewalCallFlag.js';
 
 const HUBSPOT_EMAIL_DIRECTION = 'EMAIL';
 const HUBSPOT_EMAIL_STATUS_SENT = 'SENT';
@@ -384,4 +385,8 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
     targetEmail,
     companyId: lead.hubspotCompanyId,
   });
+
+  if (draft.kind === 'renewal') {
+    await flagRenewalForCall(draftId);
+  }
 };

@@ -45,6 +45,7 @@ export const CRON_JOBS: CronJobDef[] = [
     enabled: true,
   },
   { name: 'renewalWarnings', kind: 'daily', etHour: 10, etMinute: 0, modulePath: './renewalWarnings.js', enabled: true },
+  { name: 'renewalCallFollowups', kind: 'daily', etHour: 8, etMinute: 0, modulePath: './renewalCallFollowups.js', enabled: true },
   // Consent-gated post-sale vm-1 only (renewal/reactivation + PEWC). Cold vm disabled.
   { name: 'dropVoicemails', kind: 'daily', etHour: 14, etMinute: 0, modulePath: './dropVoicemails.js', enabled: true },
   // Every Railway cron tick (*/5 UTC): isDueNow uses minute % 5 < 5; shouldSkip

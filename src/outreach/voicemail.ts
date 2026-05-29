@@ -146,7 +146,10 @@ export const dropVoicemail = async (
       kind: 'voicemail',
       body: script,
       audioMp3: mp3,
-      status: 'pending',
+      status:
+        process.env.VM_AI_AUTO_SEND === 'true' && trigger === 'reactivation'
+          ? 'approved'
+          : 'pending',
     },
   });
   await audit('voicemail.drafted', leadId, {
