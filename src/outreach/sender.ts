@@ -22,7 +22,7 @@ import { guessEmail } from '../shared/guessEmail.js';
 import { isLandline, twilio } from '../shared/twilio.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import { isSmokeTestLead } from '../shared/smokeTestLead.js';
-import { isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
+import { isTcpaCallingHoursOpen, isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
 
 const HUBSPOT_EMAIL_DIRECTION = 'EMAIL';
 const HUBSPOT_EMAIL_STATUS_SENT = 'SENT';
@@ -131,6 +131,18 @@ const dropVoicemailViaTwilio = async (
   draft: Draft,
   lead: LeadWithEnrichment,
 ): Promise<void> => {
+  if (process.env.VM_AI_AUTO_SEND !== 'true') {
+    await audit('sender.voicemail-auto-send-paused', draft.id, {
+      leadId: lead.id,
+      kind: draft.kind,
+      hint: 'Set VM_AI_AUTO_SEND=true after counsel sign-off',
+    });
+    return;
+  }
+  if (!lead.priorWrittenConsent) {
+    await audit('sender.voicemail-skipped-no-consent', draft.id, { leadId: lead.id });
+    return;
+  }
   if (draft.twilioCallSid !== null) {
     await audit('sender.voicemail-already-dropped', draft.id, { callSid: draft.twilioCallSid });
     return;
@@ -211,6 +223,19 @@ const dropVoicemailViaTwilio = async (
     return;
   }
 
+  // Federal TCPA quiet hours: 8 AM–9 PM local for all automated vm drops.
+  const tcpaHours = isTcpaCallingHoursOpen(lead.state);
+  if (!tcpaHours.allowed && !isSmokeTestLead(lead.id)) {
+    await audit('sender.voicemail-deferred-tcpa-hours', draft.id, {
+      leadId: lead.id,
+      state: lead.state,
+      kind: draft.kind,
+      reason: tcpaHours.reason,
+      timezone: tcpaHours.timezone,
+    });
+    return;
+  }
+
   // Vm-1 dials only outside local Mon–Fri 9 AM–6 PM (or anytime weekends).
   // Keeps status='approved' so sendApproved retries every 10 min until the
   // window opens — no extra operator action needed.
@@ -251,6 +276,8 @@ const dropVoicemailViaTwilio = async (
     phoneE164,
     recording: smokeTest,
     amdSpeechEndThresholdMs: TWILIO_MACHINE_DETECTION_SPEECH_END_MS,
+    artificialVoice: true,
+    disclosuresInjected: true,
   });
 };
 

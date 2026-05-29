@@ -1,18 +1,7 @@
 // tsx src/scripts/runSecondCalls.ts
 //
-// Cron entry: draft a second-touch voicemail (kind='voicemail-2') for every
-// lead whose first voicemail was successfully dropped at least 3 business
-// days ago, and that hasn't already had a voicemail-2 drafted.
-//
-// The 3-business-day gap is Stevi's pattern: the prospect has had time to
-// hear the first voicemail and Sonia's voice is no longer unfamiliar; a
-// second call now has a meaningfully higher chance of catching the
-// decision maker live (which triggers the bridge in twilioHooks.ts).
-//
-// runSecondCalls drafts only. The actual call (TwiML bridge or VM drop)
-// happens via sendApproved once Sonia approves the draft from /queue.
-// Approval is the implicit consent: she's signaling availability for the
-// bridge to her phone within the next 10 minutes (sendApproved's interval).
+// Cron entry: draft vm-2 for consent-gated vm-1 drops (post-sale only).
+// Requires Lead.priorWrittenConsent — same policy as dropVoicemails.
 
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -36,6 +25,7 @@ const main = async (): Promise<void> => {
 
     const candidates = await prisma.lead.findMany({
       where: {
+        priorWrittenConsent: true,
         phoneE164: { not: null },
         doNotContact: false,
         drafts: {
@@ -73,7 +63,7 @@ const main = async (): Promise<void> => {
     await prisma.auditLog.create({ data: {
       action: 'cron.success',
       entity: 'runSecondCalls',
-      meta: { total: candidates.length, ok, fail },
+      meta: { total: candidates.length, ok, fail, mode: 'consent-gated-post-sale' },
     } });
     console.log(JSON.stringify({ total: candidates.length, ok, fail }));
   } catch (err) {

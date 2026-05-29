@@ -1,19 +1,21 @@
 // tsx src/scripts/dropVoicemails.ts
 //
-// Cron entry: for every lead whose cold draft was approved in the last 7
-// days and that has a phone number on file, draft a Twilio-ready voicemail.
+// Cron entry: draft a consent-gated vm-1 for leads who opted in to phone
+// contact (Lead.priorWrittenConsent) after a sent renewal or reactivation
+// email. Cold-prospect vm drops are intentionally NOT triggered here.
+//
 // Idempotent — dropVoicemail() short-circuits if a voicemail draft already
-// exists for the lead in any non-rejected status. Hard cap 50 leads/day to
-// keep ElevenLabs spend bounded; 1s pacing so we don't slam Twilio Lookups.
+// exists. Hard cap 50/day; 1s pacing for Twilio Lookups.
 
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
-import { dropVoicemail } from '../outreach/voicemail.js';
+import { dropVoicemail, type VoicemailTrigger } from '../outreach/voicemail.js';
 
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const DAILY_CAP = 50;
 const PACING_MS = 1_000;
+const CONSENT_TRIGGER_KINDS = ['renewal', 'reactivation'] as const;
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -21,18 +23,38 @@ const prisma = new PrismaClient({
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+const resolveTrigger = async (
+  leadId: string,
+  cutoff: Date,
+): Promise<VoicemailTrigger | null> => {
+  const sent = await prisma.draft.findFirst({
+    where: {
+      leadId,
+      kind: { in: [...CONSENT_TRIGGER_KINDS] },
+      status: { in: ['sent', 'auto-sent'] },
+      sentAt: { gte: cutoff },
+    },
+    orderBy: { sentAt: 'desc' },
+    select: { kind: true },
+  });
+  if (sent === null) return null;
+  if (sent.kind === 'renewal' || sent.kind === 'reactivation') return sent.kind;
+  return null;
+};
+
 const main = async (): Promise<void> => {
   try {
-    const cutoff = new Date(Date.now() - SEVEN_DAYS_MS);
+    const cutoff = new Date(Date.now() - THIRTY_DAYS_MS);
     const candidates = await prisma.lead.findMany({
       where: {
+        priorWrittenConsent: true,
         phoneE164: { not: null },
         doNotContact: false,
         drafts: {
           some: {
-            kind: 'cold',
-            status: { in: ['approved', 'sent'] },
-            createdAt: { gte: cutoff },
+            kind: { in: [...CONSENT_TRIGGER_KINDS] },
+            status: { in: ['sent', 'auto-sent'] },
+            sentAt: { gte: cutoff },
           },
           none: { kind: 'voicemail' },
         },
@@ -44,9 +66,15 @@ const main = async (): Promise<void> => {
 
     let ok = 0;
     let fail = 0;
+    let skipped = 0;
     for (const lead of candidates) {
+      const trigger = await resolveTrigger(lead.id, cutoff);
+      if (trigger === null) {
+        skipped += 1;
+        continue;
+      }
       try {
-        await dropVoicemail(lead.id);
+        await dropVoicemail(lead.id, trigger);
         ok += 1;
       } catch (err) {
         fail += 1;
@@ -63,9 +91,9 @@ const main = async (): Promise<void> => {
     await prisma.auditLog.create({ data: {
       action: 'cron.success',
       entity: 'dropVoicemails',
-      meta: { total: candidates.length, ok, fail },
+      meta: { total: candidates.length, ok, fail, skipped, mode: 'consent-gated-post-sale' },
     } });
-    console.log(JSON.stringify({ total: candidates.length, ok, fail }));
+    console.log(JSON.stringify({ total: candidates.length, ok, fail, skipped }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await prisma.auditLog.create({ data: {

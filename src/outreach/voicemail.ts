@@ -1,17 +1,10 @@
-// Voicemail drop drafter.
+// Voicemail drop drafter — post-sale, consent-gated only.
 //
-// dropVoicemail loads a lead, generates a 25-second TTS script via Claude,
-// renders it to MP3 via ElevenLabs, and persists a Draft of kind='voicemail'
-// in 'pending' status so the operator can approve it from /queue. After
-// approval, src/outreach/sender.ts routes the draft to Twilio (AMD voicemail
-// drop — the phone rings; MP3 plays only when Twilio detects a machine).
+// dropVoicemail drafts vm-1 for leads with Lead.priorWrittenConsent after a
+// sent renewal or reactivation email. Drafts land in /queue as reference
+// scripts; operator places live calls manually until counsel approves AI send.
 //
-// Idempotency / safety rails:
-// - Skip if phone is unknown, lead.doNotContact, or phoneE164 is in Suppression.
-// - One voicemail draft per lead total (any non-rejected status counts).
-// - Mobile/VoIP numbers persist a 'voicemail-skipped-mobile' draft and never
-//   attempt a drop. The Twilio Lookups Line Type Intelligence call is the
-//   TCPA gate — running it BEFORE we pay ElevenLabs for the audio buffer.
+// Automated Twilio drops require operator approval (currently disabled in /queue).
 
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
@@ -20,11 +13,14 @@ import { claude, extractText } from '../shared/claude.js';
 import { isLandline } from '../shared/twilio.js';
 import { renderVoicemailMp3 } from '../shared/eleven.js';
 import { formatPhoneForSpeech } from '../shared/formatPhoneForSpeech.js';
+import { wrapVoicemailScript, type VoicemailTrigger } from '../shared/voicemailCompliance.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import {
   VOICEMAIL_SCRIPT_SYSTEM,
   buildVoicemailScriptUser,
 } from '../prompts/voicemailScript.js';
+
+export type { VoicemailTrigger };
 
 const MODEL = 'claude-sonnet-4-5-20250929';
 const MAX_TOKENS = 200;
@@ -45,7 +41,10 @@ const cached = (text: string): Array<TextBlockParam> => [
   { type: 'text', text, cache_control: { type: 'ephemeral' } },
 ];
 
-export const dropVoicemail = async (leadId: string): Promise<void> => {
+export const dropVoicemail = async (
+  leadId: string,
+  trigger: VoicemailTrigger,
+): Promise<void> => {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },
     include: { enrichment: true },
@@ -54,6 +53,10 @@ export const dropVoicemail = async (leadId: string): Promise<void> => {
   const enrichment = lead.enrichment;
   if (enrichment === null) return;
 
+  if (!lead.priorWrittenConsent) {
+    await audit('voicemail.skipped-no-consent', leadId, { trigger });
+    return;
+  }
   if (lead.phoneE164 === null) {
     await audit('voicemail.skipped-no-phone', leadId, {});
     return;
@@ -81,10 +84,6 @@ export const dropVoicemail = async (leadId: string): Promise<void> => {
     return;
   }
 
-  // State / country gate. Runs BEFORE any paid API call (Twilio Lookups,
-  // Claude, ElevenLabs) so blocked leads cost us $0. Tombstone draft tells
-  // future ticks not to retry and surfaces the lead in the daily brief's
-  // "manual VM required" section.
   const eligibility = isAutoVoicemailAllowed(phoneE164, lead.state, lead.priorWrittenConsent);
   if (!eligibility.allowed) {
     await prisma.draft.create({
@@ -104,9 +103,6 @@ export const dropVoicemail = async (leadId: string): Promise<void> => {
   }
 
   const phoneCallback = formatPhoneForSpeech(process.env.SONIA_PHONE ?? '');
-  // Twilio Lookups Line Type Intelligence — landline-only is the TCPA gate.
-  // VoIP/mobile/unknown all return false → we persist a tombstone draft so
-  // we don't retry on the next dropVoicemails tick. Costs $0.008/lookup.
   const landline = await isLandline(phoneE164);
   if (!landline) {
     await prisma.draft.create({
@@ -128,15 +124,20 @@ export const dropVoicemail = async (leadId: string): Promise<void> => {
     system: cached(VOICEMAIL_SCRIPT_SYSTEM),
     messages: [{
       role: 'user',
-      content: buildVoicemailScriptUser(lead, enrichment, phoneCallback),
+      content: buildVoicemailScriptUser(lead, enrichment, phoneCallback, trigger),
     }],
   });
-  const script = extractText(msg).trim();
-  if (script === '') {
+  const middle = extractText(msg).trim();
+  if (middle === '') {
     await audit('voicemail.empty-script', leadId, {});
     return;
   }
 
+  const script = wrapVoicemailScript(middle, {
+    callbackPhoneSpeech: phoneCallback,
+    touch: 1,
+    trigger,
+  });
   const mp3 = await renderVoicemailMp3(script);
 
   const draft = await prisma.draft.create({
@@ -152,5 +153,7 @@ export const dropVoicemail = async (leadId: string): Promise<void> => {
     draftId: draft.id,
     scriptLength: script.length,
     audioBytes: mp3.length,
+    trigger,
+    consentGated: true,
   });
 };

@@ -16,6 +16,7 @@ import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import { claude, extractText } from '../shared/claude.js';
 import { renderVoicemailMp3 } from '../shared/eleven.js';
 import { formatPhoneForSpeech } from '../shared/formatPhoneForSpeech.js';
+import { wrapVoicemailScript, type VoicemailTrigger } from '../shared/voicemailCompliance.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import {
   VOICEMAIL_SCRIPT_2_SYSTEM,
@@ -50,6 +51,10 @@ export const dropVoicemail2 = async (leadId: string): Promise<void> => {
   const enrichment = lead.enrichment;
   if (enrichment === null) return;
 
+  if (!lead.priorWrittenConsent) {
+    await audit('voicemail2.skipped-no-consent', leadId, {});
+    return;
+  }
   if (lead.phoneE164 === null) {
     await audit('voicemail2.skipped-no-phone', leadId, {});
     return;
@@ -112,6 +117,19 @@ export const dropVoicemail2 = async (leadId: string): Promise<void> => {
   }
 
   const phoneCallback = formatPhoneForSpeech(process.env.SONIA_PHONE ?? '');
+
+  const triggerDraft = await prisma.draft.findFirst({
+    where: {
+      leadId,
+      kind: { in: ['renewal', 'reactivation'] },
+      status: { in: ['sent', 'auto-sent'] },
+    },
+    orderBy: { sentAt: 'desc' },
+    select: { kind: true },
+  });
+  const trigger: VoicemailTrigger =
+    triggerDraft?.kind === 'reactivation' ? 'reactivation' : 'renewal';
+
   const msg = await claude.messages.create({
     model: MODEL,
     max_tokens: MAX_TOKENS,
@@ -119,15 +137,20 @@ export const dropVoicemail2 = async (leadId: string): Promise<void> => {
     system: cached(VOICEMAIL_SCRIPT_2_SYSTEM),
     messages: [{
       role: 'user',
-      content: buildVoicemailScript2User(lead, enrichment, phoneCallback),
+      content: buildVoicemailScript2User(lead, enrichment, phoneCallback, trigger),
     }],
   });
-  const script = extractText(msg).trim();
-  if (script === '') {
+  const middle = extractText(msg).trim();
+  if (middle === '') {
     await audit('voicemail2.empty-script', leadId, {});
     return;
   }
 
+  const script = wrapVoicemailScript(middle, {
+    callbackPhoneSpeech: phoneCallback,
+    touch: 2,
+    trigger,
+  });
   const mp3 = await renderVoicemailMp3(script);
 
   const draft = await prisma.draft.create({
