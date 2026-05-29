@@ -17,7 +17,7 @@ const cached = (text: string): Array<TextBlockParam> => [
 ];
 
 const MODEL = 'claude-sonnet-4-5-20250929';
-const GEN_MAX_TOKENS = 1024;
+const GEN_MAX_TOKENS = 1536;
 const GEN_TEMPERATURE = 0.7;
 const EVAL_MAX_TOKENS = 512;
 const EVAL_TEMPERATURE = 0.3;
