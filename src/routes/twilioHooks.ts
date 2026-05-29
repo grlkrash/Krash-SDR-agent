@@ -33,6 +33,7 @@ const NO_ANSWER = 'no-answer';
 const MACHINE_END_BEEP = 'machine_end_beep';
 const CALL_STATUS_COMPLETED = 'completed';
 const BRIDGE_TIMEOUT_SECONDS = 20;
+const INBOUND_DIAL_TIMEOUT_SECONDS = 30;
 // Brief pause after AMD before <Play> — gives GV/carrier mailboxes time to enter record mode.
 const PRE_PLAY_PAUSE_SECONDS = 2;
 
@@ -156,6 +157,30 @@ const bridgeHumanToSonia = async (opts: {
   });
   opts.res.type('text/xml').send(twiml);
 };
+
+// Inbound calls to TWILIO_FROM_NUMBER — forward to SONIA_PHONE so callbacks
+// and opt-out callers reach the operator. Configure in Twilio Console:
+// Phone Numbers → your number → Voice → A call comes in →
+// ${PUBLIC_URL}/webhook/twilio/inbound (HTTP POST).
+twilioRouter.post('/webhook/twilio/inbound', async (req, res) => {
+  const body = parseTwilioBody(req.body);
+  const sonia = process.env.SONIA_PHONE ?? '';
+  await audit('twilio.inbound-call', null, {
+    callSid: body.CallSid ?? '',
+    from: body.From ?? '',
+    to: body.To ?? '',
+  });
+  if (sonia === '') {
+    res.type('text/xml').send(
+      '<Response><Say>We are unable to connect your call right now. Goodbye.</Say><Hangup/></Response>',
+    );
+    return;
+  }
+  const twiml =
+    '<Response><Say>Connecting you to Sobriety Select.</Say>'
+    + `<Dial timeout="${INBOUND_DIAL_TIMEOUT_SECONDS}">${escapeXml(sonia)}</Dial></Response>`;
+  res.type('text/xml').send(twiml);
+});
 
 twilioRouter.post('/webhook/twilio/twiml', async (req, res) => {
   const draftId = parseDraftId(req.query.draftId);

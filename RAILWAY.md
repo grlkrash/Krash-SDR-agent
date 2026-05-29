@@ -222,7 +222,7 @@ ElevenLabs renders the MP3; **Twilio places the call and plays it**. No ElevenLa
 1. **Buy a number** — Phone Numbers → Manage → Buy a number. Must include **Voice**. This becomes `TWILIO_FROM_NUMBER` in E.164 (`+1XXXXXXXXXX`).
 2. **Copy credentials** — Account → API keys & tokens → `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`.
 3. **Enable US outbound** — Voice → Settings → **Geo permissions** → allow **United States** (and Canada if needed).
-4. **Do not set a Voice webhook on the number.** Outbound calls pass `url` and `statusCallback` per call in code. Leaving the number's Voice URL blank is correct.
+4. **Set inbound Voice webhook** — Phone Numbers → your number → **Configure** → Voice → *A call comes in* → **Webhook** → `https://YOUR_PUBLIC_URL/webhook/twilio/inbound` (HTTP POST). This forwards callbacks to `SONIA_PHONE`. Outbound vm calls still pass their own `url` per call in code — inbound and outbound configs do not conflict.
 5. **Trial account?** Verify any test destination numbers under Phone Numbers → Verified Caller IDs, or upgrade to paid.
 6. **Lookups Line Type Intelligence** — used automatically by `isLandline()` ($0.008/lookup). No separate console toggle; requires a paid account with Lookups enabled.
 
@@ -245,7 +245,9 @@ ElevenLabs renders the MP3; **Twilio places the call and plays it**. No ElevenLa
 curl https://YOUR_PUBLIC_URL/health
 ```
 
-Then: approve one voicemail draft in `/queue` → `sendApproved` fires within 10 min → vm-1 dials only in the lead's **local after-hours window** (Mon–Fri before 9 AM or after 6 PM, or anytime weekends). Check `AuditLog` for `sender.voicemail-dropped` or `sender.voicemail-deferred-send-window`.
+**Inbound callback test:** call your `TWILIO_FROM_NUMBER` — you should hear "Connecting you to Sobriety Select" and `SONIA_PHONE` should ring.
+
+For automated vm (only when `VM_AI_AUTO_SEND=true` after counsel sign-off): approve one voicemail draft in `/queue` → `sendApproved` fires within 10 min. Check `AuditLog` for `sender.voicemail-dropped` or `sender.voicemail-deferred-send-window`.
 
 Human pickup on vm-1 or vm-2 → prep brief email + call bridges to `SONIA_PHONE`.
 
