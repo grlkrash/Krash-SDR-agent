@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
+import { bodyToHtmlFragment, bodyToPlainText } from './emailHtml.js';
 import { signUnsubToken } from './unsubscribeToken.js';
 
 // Sobriety Select is a registered DBA — per legal requirement, customer-facing
@@ -49,9 +50,6 @@ const escapeHtml = (text: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-const plainTextToHtml = (body: string): string =>
-  escapeHtml(body).replace(/\r\n/g, '\n').replace(/\n/g, '<br>\n');
-
 const encodeBase64Body = (text: string): string =>
   Buffer.from(text, 'utf8')
     .toString('base64')
@@ -94,12 +92,14 @@ type EmailBodies = { plain: string; html: string; unsubUrl: string };
 
 const buildBodies = (opts: { to: string; body: string }): EmailBodies => {
   const unsubUrl = buildUnsubUrl(opts.to);
+  const mainPlain = bodyToPlainText(opts.body);
+  const mainHtml = bodyToHtmlFragment(opts.body);
   return {
-    plain: `${opts.body}${buildPlainFooter(unsubUrl)}`,
+    plain: `${mainPlain}${buildPlainFooter(unsubUrl)}`,
     html: [
       '<!DOCTYPE html><html><body style="margin:0;padding:0;">',
       `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222222;">`,
-      plainTextToHtml(opts.body),
+      mainHtml,
       '</div>',
       buildHtmlFooter(unsubUrl),
       '</body></html>',

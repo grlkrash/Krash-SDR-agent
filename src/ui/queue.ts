@@ -12,6 +12,12 @@ import {
   awaitingReplySilenceCutoff,
 } from '../shared/awaitingReply.js';
 import { guessEmail } from '../shared/guessEmail.js';
+import {
+  isHtmlBody,
+  normalizeApprovedBody,
+  prepareBodyForEditor,
+  sanitizeEmailHtml,
+} from '../shared/emailHtml.js';
 import { logHubspotOutboundCall } from '../shared/logHubspotCall.js';
 import { MANUAL_VM_CALLED_STATUS } from '../outreach/brief/manualVm.js';
 
@@ -22,7 +28,7 @@ const PAGE_SIZE = 30;
 // We fetch a window larger than the page so sort=value can rank the full
 // never realistically exceed this; if it does the operator has bigger problems.
 const FETCH_CAP = 200;
-const TEXTAREA_ROWS = 12;
+const EDITOR_MIN_HEIGHT_PX = 220;
 const HOLD_TO_CONFIRM_MS = 3000;
 const DAY_MS = 86_400_000;
 // Paused drafts older than this are treated as stale: the conversation that
@@ -274,6 +280,25 @@ const renderKillLeadFormById = (leadId: string): string =>
 
 const renderKillLeadForm = (d: DraftWithRel): string => renderKillLeadFormById(d.lead.id);
 
+const renderEmailBodyPreview = (body: string): string => {
+  if (isHtmlBody(body)) {
+    return `<div class="email-text body email-html">${sanitizeEmailHtml(body)}</div>`;
+  }
+  return `<pre class="email-text body">${escapeHtml(body)}</pre>`;
+};
+
+const renderEmailEditor = (body: string): string => `
+      <div class="editor-wrap">
+        <div class="fmt-toolbar" role="toolbar" aria-label="Email formatting">
+          <button type="button" class="fmt-btn" data-cmd="bold" title="Bold (⌘B)"><b>B</b></button>
+          <button type="button" class="fmt-btn" data-cmd="italic" title="Italic (⌘I)"><i>I</i></button>
+          <button type="button" class="fmt-btn" data-cmd="underline" title="Underline (⌘U)"><u>U</u></button>
+          <button type="button" class="fmt-btn" data-cmd="createLink" title="Insert link (⌘K)">Link</button>
+        </div>
+        <div class="email-editor" contenteditable="true" role="textbox" aria-multiline="true" style="min-height:${EDITOR_MIN_HEIGHT_PX}px">${prepareBodyForEditor(body)}</div>
+        <input type="hidden" name="body" value="" />
+      </div>`;
+
 const renderPendingCard = (d: DraftWithRel): string => {
   if (isVoicemailKind(d.kind)) {
     return `
@@ -306,7 +331,7 @@ const renderPendingCard = (d: DraftWithRel): string => {
     ${renderHeader(d)}
     <form method="post" action="${approveAction}" class="draft-form">
       <input type="text" name="subject" value="${escapeHtml(subject)}" placeholder="(no subject — voicemail or call)" />
-      <textarea name="body" rows="${TEXTAREA_ROWS}">${escapeHtml(d.body)}</textarea>
+      ${renderEmailEditor(d.body)}
       <input type="text" name="reason" placeholder="reject reason (only sent with Reject)" />
       <div class="actions">
         <button type="submit" class="btn btn-approve">Approve</button>
@@ -352,7 +377,7 @@ const renderApprovedCard = (d: DraftWithRel): string => {
       </div>
       <div class="email-field">
         <div class="email-label">Body</div>
-        <pre class="email-text body">${escapeHtml(d.body)}</pre>
+        ${renderEmailBodyPreview(d.body)}
       </div>
     </div>
     <div class="approved-actions">
@@ -478,6 +503,15 @@ const STYLE = `
   .email-text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.5; color: #0f172a; white-space: pre-wrap; word-wrap: break-word; margin: 0; background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; user-select: text; cursor: text; }
   .email-text.subject { font-weight: 500; }
   .email-text.empty { color: #9ca3af; font-style: italic; }
+  .email-html { white-space: normal; }
+  .email-html a { color: #2563eb; text-decoration: underline; }
+  .editor-wrap { display: flex; flex-direction: column; gap: 0; }
+  .fmt-toolbar { display: flex; gap: 4px; padding: 6px 8px; background: #f4f4f5; border: 1px solid #d4d4d8; border-bottom: none; border-radius: 6px 6px 0 0; flex-wrap: wrap; }
+  .fmt-btn { font-size: 13px; padding: 4px 10px; border-radius: 4px; border: 1px solid #d4d4d8; background: white; cursor: pointer; color: #374151; line-height: 1.2; }
+  .fmt-btn:hover { background: #eef2ff; border-color: #a5b4fc; }
+  .email-editor { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 14px; line-height: 1.45; padding: 8px 10px; border: 1px solid #d4d4d8; border-radius: 0 0 6px 6px; background: white; overflow-y: auto; resize: vertical; outline: none; }
+  .email-editor:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+  .email-editor a { color: #2563eb; text-decoration: underline; }
   .approved-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   .lead-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   .undo-actions { display: flex; gap: 6px; flex-shrink: 0; }
@@ -508,8 +542,7 @@ const STYLE = `
   .kind-cold { background: #6366f1; }
   .kind-nudge { background: #8b5cf6; }
   .draft-form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-  .draft-form input[type=text], .draft-form textarea { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 14px; padding: 8px; border: 1px solid #d4d4d8; border-radius: 6px; }
-  .draft-form textarea { resize: vertical; line-height: 1.45; }
+  .draft-form input[type=text] { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 14px; padding: 8px; border: 1px solid #d4d4d8; border-radius: 6px; }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn { font-size: 14px; padding: 6px 12px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-weight: 500; }
   .btn-approve { background: #16a34a; color: white; }
@@ -534,6 +567,54 @@ window.killLeadPrompt = function (form) {
   if (input) input.value = reason;
   return true;
 };
+`;
+
+const EDITOR_SCRIPT = `
+(function () {
+  function syncDraftEditors() {
+    document.querySelectorAll('form.draft-form').forEach(function (form) {
+      var editor = form.querySelector('.email-editor');
+      var hidden = form.querySelector('input[name="body"]');
+      if (!editor || !hidden) return;
+      hidden.value = editor.innerHTML;
+    });
+  }
+  function exec(cmd, val) {
+    document.execCommand(cmd, false, val ?? null);
+  }
+  function bindEditor(form) {
+    var editor = form.querySelector('.email-editor');
+    if (!editor) return;
+    form.querySelectorAll('.fmt-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        editor.focus();
+        var cmd = btn.getAttribute('data-cmd');
+        if (cmd === 'createLink') {
+          var url = window.prompt('Link URL (https://...)', 'https://');
+          if (!url) return;
+          exec('createLink', url);
+          return;
+        }
+        if (cmd) exec(cmd);
+      });
+    });
+    editor.addEventListener('keydown', function (e) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === 'b') { e.preventDefault(); exec('bold'); }
+      else if (e.key === 'i') { e.preventDefault(); exec('italic'); }
+      else if (e.key === 'u') { e.preventDefault(); exec('underline'); }
+      else if (e.key === 'k') {
+        e.preventDefault();
+        var url = window.prompt('Link URL (https://...)', 'https://');
+        if (url) exec('createLink', url);
+      }
+    });
+    form.addEventListener('submit', function () { syncDraftEditors(); });
+  }
+  window.syncDraftEditors = syncDraftEditors;
+  document.querySelectorAll('form.draft-form').forEach(bindEditor);
+})();
 `;
 
 const HOLD_SCRIPT = `
@@ -561,6 +642,7 @@ const HOLD_SCRIPT = `
     btn.classList.remove('armed');
     btn.disabled = true;
     if (status) status.textContent = 'Approving…';
+    if (window.syncDraftEditors) window.syncDraftEditors();
     var forms = Array.prototype.slice.call(document.querySelectorAll('form.draft-form'));
     (async function () {
       var ok = 0;
@@ -678,6 +760,7 @@ const renderPage = (
     ${approvedCards}
   </section>${awaitingReplySection}${undoSection}
   <script>${KILL_LEAD_SCRIPT}</script>
+  <script>${EDITOR_SCRIPT}</script>
   <script>${HOLD_SCRIPT}</script>
 </body>
 </html>`;
@@ -807,12 +890,14 @@ queueRouter.post('/approve/:id', queueAuth, async (req, res) => {
   }
   const subjectChanged =
     parsed.data.subject !== undefined && parsed.data.subject !== (existing.subject ?? '');
-  const bodyChanged = parsed.data.body !== undefined && parsed.data.body !== existing.body;
+  const normalizedBody =
+    parsed.data.body !== undefined ? normalizeApprovedBody(parsed.data.body) : undefined;
+  const bodyChanged = normalizedBody !== undefined && normalizedBody !== existing.body;
   const update: Prisma.DraftUpdateInput = {
     status: 'approved',
     approvedBy: 'sonia',
     ...(subjectChanged ? { subject: parsed.data.subject } : {}),
-    ...(bodyChanged ? { body: parsed.data.body } : {}),
+    ...(bodyChanged ? { body: normalizedBody } : {}),
   };
   await prisma.draft.update({ where: { id }, data: update });
   await prisma.auditLog.create({
