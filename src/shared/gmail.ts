@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { bodyToHtmlFragment, bodyToPlainText } from './emailHtml.js';
+import { markdownToEmailHtmlFragment, markdownToPlainText } from './markdownHtml.js';
 import { buildOpenTrackPixelHtml } from './openTrackPixel.js';
 import { signUnsubToken } from './unsubscribeToken.js';
 
@@ -94,11 +95,16 @@ type EmailBodies = { plain: string; html: string; unsubUrl: string };
 const buildBodies = (opts: {
   to: string;
   body: string;
+  bodyFormat?: 'plain' | 'markdown';
   openTrackPixelUrl?: string;
 }): EmailBodies => {
   const unsubUrl = buildUnsubUrl(opts.to);
-  const mainPlain = bodyToPlainText(opts.body);
-  const mainHtml = bodyToHtmlFragment(opts.body);
+  const mainPlain =
+    opts.bodyFormat === 'markdown' ? markdownToPlainText(opts.body) : bodyToPlainText(opts.body);
+  const mainHtml =
+    opts.bodyFormat === 'markdown'
+      ? markdownToEmailHtmlFragment(opts.body)
+      : bodyToHtmlFragment(opts.body);
   const pixelHtml =
     opts.openTrackPixelUrl === undefined || opts.openTrackPixelUrl === ''
       ? ''
@@ -166,6 +172,8 @@ export const sendEmail = async (opts: {
   to: string;
   subject: string;
   body: string;
+  /** Renders markdown headings/lists for prep-brief and live-bridge emails. */
+  bodyFormat?: 'plain' | 'markdown';
   inReplyTo?: string;
   references?: string;
   openTrackPixelUrl?: string;
@@ -174,6 +182,7 @@ export const sendEmail = async (opts: {
   const { plain, html, unsubUrl } = buildBodies({
     to: opts.to,
     body: opts.body,
+    bodyFormat: opts.bodyFormat,
     openTrackPixelUrl: opts.openTrackPixelUrl,
   });
   // Self-generated Message-ID so we can return it immediately and downstream

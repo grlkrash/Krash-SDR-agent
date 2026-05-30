@@ -181,12 +181,15 @@ export const buildRenewalCallRows = async (opts?: {
 
   const now = new Date();
   const rows: RenewalCallRow[] = [];
+  const seenLeadIds = new Set<string>();
   for (const d of drafts) {
     if (!flagged.has(d.id) || completed.has(d.id)) continue;
     if (d.sentAt === null) continue;
     if (!isWithinRenewalCallWindow(d.sentAt, now)) continue;
     const lead = d.lead;
     if (lead.phoneE164 === null) continue;
+    if (seenLeadIds.has(lead.id)) continue;
+    seenLeadIds.add(lead.id);
 
     const done = touchState.get(d.id) ?? new Set<number>();
     const next = nextPendingTouch(d.sentAt, done, now);

@@ -121,7 +121,12 @@ const sendPrepBriefIfPossible = async (
   emailBody: { subject: string; body: string },
 ): Promise<void> => {
   try {
-    await sendEmail({ to: recipient, subject: emailBody.subject, body: emailBody.body });
+    await sendEmail({
+      to: recipient,
+      subject: emailBody.subject,
+      body: emailBody.body,
+      bodyFormat: 'markdown',
+    });
     await audit('voicemail.prep-brief-sent', draftId, { kind, recipient });
   } catch (err) {
     await audit('voicemail.prep-brief-failed', draftId, {

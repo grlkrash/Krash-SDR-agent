@@ -162,7 +162,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     ? baseSubject
     : `📬 ${replyRows.length} new replies | ${baseSubject}`;
 
-  await sendEmail({ to: recipient, subject, body });
+  await sendEmail({ to: recipient, subject, body, bodyFormat: 'markdown' });
 
   await prisma.auditLog.create({
     data: {

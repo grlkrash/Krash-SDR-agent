@@ -29,6 +29,7 @@ import { hs, hsRetry } from '../shared/hubspot.js';
 import { queueAuth } from '../middleware/queueAuth.js';
 import { generatePrepBriefWithLead } from '../outreach/prepBrief.js';
 import { sendEmail } from '../shared/gmail.js';
+import { markdownToDocumentHtml } from '../shared/markdownHtml.js';
 
 const PAGE_STYLE =
   "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:80px auto;padding:24px;text-align:center;color:#111;";
@@ -79,89 +80,6 @@ const readCompanyId = (req: express.Request): string | null => {
   return raw.trim();
 };
 
-// Inline markdown → HTML. Covers exactly what PREP_BRIEF_SYSTEM emits:
-// ## h2 headers, - / * bullet lists, 1. ordered lists, **bold**, *italic*,
-// _italic_, `inline code`, blockquotes (>), paragraphs. Escapes first, then
-// applies inline transforms so the model can't smuggle raw HTML through.
-// Anything more elaborate (links, images, tables) we'd want a real parser
-// for — PRD §6 keeps the surface tiny so we don't pull one in for this.
-const renderInline = (s: string): string => {
-  const esc = escapeHtml(s);
-  return esc
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^\w*])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
-    .replace(/(^|[^\w_])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
-};
-
-const HEADING_RX = /^(#{1,6})\s+(.*)$/;
-// `•` (Unicode bullet) is included alongside the canonical `-`/`*` markers
-// because Claude consistently emits `• ` for bullet lists in the prep brief
-// even when the prompt asks for markdown. Treating it as a UL marker keeps
-// the rendered HTML pretty without bullying the model into different output.
-const UL_RX = /^[-*•]\s+(.*)$/;
-const OL_RX = /^\d+\.\s+(.*)$/;
-const BLOCKQUOTE_RX = /^>\s?(.*)$/;
-
-type ListState = 'ul' | 'ol' | null;
-
-const renderMarkdown = (md: string): string => {
-  const lines = md.replace(/\r\n/g, '\n').split('\n');
-  const out: string[] = [];
-  let list: ListState = null;
-
-  const closeList = (): void => {
-    if (list === 'ul') out.push('</ul>');
-    else if (list === 'ol') out.push('</ol>');
-    list = null;
-  };
-
-  for (const raw of lines) {
-    const line = raw.replace(/\s+$/, '');
-    if (line === '') {
-      closeList();
-      continue;
-    }
-    const heading = line.match(HEADING_RX);
-    if (heading !== null) {
-      closeList();
-      const level = heading[1].length;
-      out.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
-      continue;
-    }
-    const ulMatch = line.match(UL_RX);
-    if (ulMatch !== null) {
-      if (list !== 'ul') {
-        closeList();
-        out.push('<ul>');
-        list = 'ul';
-      }
-      out.push(`<li>${renderInline(ulMatch[1])}</li>`);
-      continue;
-    }
-    const olMatch = line.match(OL_RX);
-    if (olMatch !== null) {
-      if (list !== 'ol') {
-        closeList();
-        out.push('<ol>');
-        list = 'ol';
-      }
-      out.push(`<li>${renderInline(olMatch[1])}</li>`);
-      continue;
-    }
-    const bqMatch = line.match(BLOCKQUOTE_RX);
-    if (bqMatch !== null) {
-      closeList();
-      out.push(`<blockquote>${renderInline(bqMatch[1])}</blockquote>`);
-      continue;
-    }
-    closeList();
-    out.push(`<p>${renderInline(line)}</p>`);
-  }
-  closeList();
-  return out.join('\n');
-};
-
 // Print-friendly styling. Sonia opens this 5 minutes before a call — small
 // typography, generous line-height, narrow column. Print rules strip the
 // fixed max-width so a paper printout uses the full page.
@@ -206,7 +124,7 @@ const renderBriefPage = (
     <span>Deal ${escapeHtml(dealId)}</span>
     <span><a href="?send=email">📧 Email to me</a> &middot; <a href="javascript:window.print()">🖨 Print</a></span>
   </div>
-  <article class="brief">${renderMarkdown(markdown)}</article>
+  <article class="brief">${markdownToDocumentHtml(markdown)}</article>
 </body>
 </html>`;
 
@@ -296,6 +214,7 @@ prepBriefRouter.get('/prep-brief/:dealId', queueAuth, async (req, res) => {
       to: recipient,
       subject: `Prep brief: ${leadName}`,
       body: markdown,
+      bodyFormat: 'markdown',
     });
     res.type('html').send(renderEmailSent(recipient, leadName));
     return;

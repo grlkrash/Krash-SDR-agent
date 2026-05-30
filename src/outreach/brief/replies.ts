@@ -107,9 +107,9 @@ export const renderNewReplies = (rows: ReplyRow[], publicUrl: string): string =>
     const link = `${publicUrl}/queue#draft-${r.draftId}`;
     return [
       `- **${r.facility}** (${r.city}, ${r.state}) · ${owner} · ${r.relativeTime}`,
-      `  > ${r.snippet}`,
-      `  [→ Review in queue](${link})`,
+      `> ${r.snippet}`,
+      `[→ Review in queue](${link})`,
     ].join('\n');
-  }).join('\n');
+  }).join('\n\n');
   return `${header}\n\n${items}`;
 };

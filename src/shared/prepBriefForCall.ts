@@ -28,31 +28,49 @@ const formatPhoneForDisplay = (e164: string): string => {
   return `(${m[1]}) ${m[2]}-${m[3]}`;
 };
 
+const formatSignalValue = (key: string, value: unknown): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  if (Array.isArray(value) && value.length === 0) return null;
+
+  if (key === 'hiring') {
+    if (value === true) return 'Actively hiring';
+    if (Array.isArray(value)) {
+      const roles = value.slice(0, 3).filter((v) => typeof v === 'string').join(', ');
+      return roles === '' ? null : `Hiring spike: ${roles}`;
+    }
+  }
+  if (key === 'missingCompetingDirectories' && Array.isArray(value)) {
+    const names = value.slice(0, 3).filter((v) => typeof v === 'string').join(', ');
+    return names === '' ? null : `Not listed on: ${names}`;
+  }
+  if (key === 'techStack' && typeof value === 'object' && !Array.isArray(value)) {
+    const tools = Object.keys(value as Record<string, unknown>).slice(0, 3).join(', ');
+    return tools === '' ? null : `Tech stack: ${tools}`;
+  }
+  if (key === 'expansion' && typeof value === 'string') return `Expansion: ${value}`;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'boolean') return value ? key : null;
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 3).filter((v) => typeof v === 'string').join(', ');
+    return items === '' ? null : items;
+  }
+  return null;
+};
+
 const summarizeOneSignal = (signals: Prisma.JsonValue): string | null => {
   if (signals === null || typeof signals !== 'object' || Array.isArray(signals)) {
     return null;
   }
   const s = signals as Record<string, unknown>;
   for (const key of SIGNAL_KEYS_PRIORITY) {
-    const value = s[key];
-    if (value === undefined || value === null) continue;
-    if (key === 'hiring' && Array.isArray(value) && value.length > 0) {
-      const roles = value.slice(0, 2).filter((v) => typeof v === 'string').join(', ');
-      return `Hiring: ${roles}`;
-    }
-    if (key === 'hiring' && value === true) return 'Actively hiring';
-    if (key === 'missingCompetingDirectories' && Array.isArray(value) && value.length > 0) {
-      const names = value.slice(0, 2).filter((v) => typeof v === 'string').join(', ');
-      return `Not listed on: ${names}`;
-    }
-    if (key === 'techStack' && typeof value === 'object' && !Array.isArray(value)) {
-      const tools = Object.keys(value as Record<string, unknown>).slice(0, 2).join(', ');
-      if (tools.length > 0) return `Runs: ${tools}`;
-    }
-    if (key === 'expansion' && typeof value === 'string') return `Expansion: ${value}`;
+    const line = formatSignalValue(key, s[key]);
+    if (line !== null) return line;
   }
   return null;
 };
+
+const MAX_SIGNAL_LINES = 4;
 
 const summarizeAllSignals = (signals: Prisma.JsonValue): string => {
   if (signals === null || typeof signals !== 'object' || Array.isArray(signals)) {
@@ -60,13 +78,26 @@ const summarizeAllSignals = (signals: Prisma.JsonValue): string => {
   }
   const s = signals as Record<string, unknown>;
   const lines: string[] = [];
-  for (const key of Object.keys(s)) {
-    const v = s[key];
-    if (v === null || v === undefined) continue;
-    if (typeof v === 'string' && v === '') continue;
-    if (Array.isArray(v) && v.length === 0) continue;
-    lines.push(`- **${key}:** ${typeof v === 'string' ? v : JSON.stringify(v)}`);
+  const seen = new Set<string>();
+
+  for (const key of SIGNAL_KEYS_PRIORITY) {
+    const line = formatSignalValue(key, s[key]);
+    if (line === null) continue;
+    lines.push(`- ${line}`);
+    seen.add(key);
+    if (lines.length >= MAX_SIGNAL_LINES) break;
   }
+
+  if (lines.length < MAX_SIGNAL_LINES) {
+    for (const key of Object.keys(s)) {
+      if (seen.has(key)) continue;
+      const line = formatSignalValue(key, s[key]);
+      if (line === null) continue;
+      lines.push(`- ${line}`);
+      if (lines.length >= MAX_SIGNAL_LINES) break;
+    }
+  }
+
   return lines.length === 0 ? '_(no signals captured)_' : lines.join('\n');
 };
 
