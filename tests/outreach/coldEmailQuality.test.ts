@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   assessColdEmailQuality,
+  assessColdEmailSubject,
+  assessColdDraftQuality,
   bodyWordCount,
   COLD_BODY_MIN_WORDS,
+  SUBJECT_MAX_CHARS,
+  SUBJECT_MAX_WORDS,
 } from '../../src/outreach/coldEmailQuality.js';
 
 const GOLD_BODY = [
@@ -14,11 +18,19 @@ const GOLD_BODY = [
   'If a quick look makes sense for Tri County, grab a time here: https://meetings-na2.hubspot.com/sonia-gibbs',
 ].join(' ');
 
-describe('coldEmailQuality', () => {
+const ctx = {
+  facilityName: 'Tri County Human Services Inc',
+  city: 'Wauchula',
+  state: 'FL',
+  ownerName: 'Robert',
+  services: ['Outpatient'],
+};
+
+describe('coldEmailQuality — body', () => {
   it('passes gold-standard body', () => {
     const result = assessColdEmailQuality(GOLD_BODY);
     expect(result.ok).toBe(true);
-    expect(result.wordCount).toBeGreaterThanOrEqual(COLD_BODY_MIN_WORDS);
+    expect(bodyWordCount(GOLD_BODY)).toBeGreaterThanOrEqual(COLD_BODY_MIN_WORDS);
   });
 
   it('flags too-short body', () => {
@@ -39,5 +51,45 @@ describe('coldEmailQuality', () => {
     expect(bodyWordCount(longButGeneric)).toBeGreaterThanOrEqual(COLD_BODY_MIN_WORDS);
     const result = assessColdEmailQuality(longButGeneric);
     expect(result.issues).toContain('missing-ss-identity');
+  });
+});
+
+describe('coldEmailQuality — subject', () => {
+  it('passes pain-point colleague subject', () => {
+    const result = assessColdEmailSubject('lakeland families reaching competitors', {
+      ...ctx,
+      city: 'Lakeland',
+      facilityName: 'Peace River Center',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.wordCount).toBeLessThanOrEqual(SUBJECT_MAX_WORDS);
+    expect(result.charCount).toBeLessThanOrEqual(SUBJECT_MAX_CHARS);
+  });
+
+  it('rejects legacy Stevi vendor-pitch subject', () => {
+    const result = assessColdEmailSubject('Increase Visibility on SobrietySelect.com!', ctx);
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain('vendor-pitch');
+    expect(result.issues).toContain('has-exclamation');
+  });
+
+  it('rejects generic subject without prospect token', () => {
+    const result = assessColdEmailSubject('quick question about intake', {
+      ...ctx,
+      city: 'Zzzville',
+      facilityName: 'Xy Zq',
+      ownerName: null,
+      services: [],
+    });
+    expect(result.issues).toContain('missing-prospect-token');
+  });
+
+  it('assessColdDraftQuality combines body and subject', () => {
+    const draft = assessColdDraftQuality(
+      'wauchula intake gap',
+      GOLD_BODY,
+      ctx,
+    );
+    expect(draft.ok).toBe(true);
   });
 });

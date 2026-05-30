@@ -9,8 +9,9 @@ import {
   buildColdEmailUser,
 } from '../prompts/coldEmail.js';
 import {
-  assessColdEmailQuality,
-  buildQualityRetryFeedback,
+  assessColdDraftQuality,
+  buildDraftQualityRetryFeedback,
+  type SubjectProspectContext,
 } from './coldEmailQuality.js';
 import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
@@ -58,9 +59,20 @@ type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
 type AttemptSnapshot = {
   gen: GenOutput;
-  quality: ReturnType<typeof assessColdEmailQuality>;
+  quality: ReturnType<typeof assessColdDraftQuality>;
   evalResult: EvalOutput;
 };
+
+const subjectContext = (
+  lead: { name: string; city: string; state: string; services: string[] },
+  enrichment: { ownerName: string | null },
+): SubjectProspectContext => ({
+  facilityName: lead.name,
+  city: lead.city,
+  state: lead.state,
+  ownerName: enrichment.ownerName,
+  services: lead.services,
+});
 
 const audit = (action: string, leadId: string, meta: Prisma.InputJsonValue): Promise<unknown> =>
   prisma.auditLog.create({ data: { action, entity: 'lead', entityId: leadId, meta } });
@@ -96,14 +108,14 @@ const evaluate = async (body: string, prospectFacts: unknown): Promise<EvalOutpu
   };
 };
 
-const needsRetry = (quality: ReturnType<typeof assessColdEmailQuality>, evalResult: EvalOutput): boolean =>
+const needsRetry = (quality: ReturnType<typeof assessColdDraftQuality>, evalResult: EvalOutput): boolean =>
   !quality.ok
   || evalResult.pct < RETRY_TRIGGER_PCT
   || !evalResult.hasSsProduct
   || !evalResult.hasMarketPain;
 
 const buildRetryFeedback = (
-  quality: ReturnType<typeof assessColdEmailQuality>,
+  quality: ReturnType<typeof assessColdDraftQuality>,
   evalResult: EvalOutput,
 ): string => {
   const parts: string[] = [];
@@ -124,10 +136,10 @@ const buildRetryFeedback = (
     );
   }
   if (!quality.ok) {
-    parts.push(buildQualityRetryFeedback(quality));
+    parts.push(buildDraftQualityRetryFeedback(quality));
   }
 
-  parts.push('Output the same JSON schema. Target 130–165 words.');
+  parts.push('Output the same JSON schema. Target 130–165 words; subject ≤6 words with a prospect token.');
   return parts.join(' ');
 };
 
@@ -196,6 +208,8 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
     });
   }
 
+  const subjCtx = subjectContext(leadOnly, enrichment);
+
   let gen = await generate([{ role: 'user', content: baseUser }]);
 
   const firstLeaks = scanLeaks(gen.body, [leadOnly.name]);
@@ -204,7 +218,7 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
     return null;
   }
 
-  let quality = assessColdEmailQuality(gen.body);
+  let quality = assessColdDraftQuality(gen.subject, gen.body, subjCtx);
   let evalResult = await evaluate(gen.body, prospectFacts);
 
   if (needsRetry(quality, evalResult)) {
@@ -213,8 +227,9 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
 
     await audit('draftCold.retry-triggered', leadId, {
       firstPct: evalResult.pct,
-      wordCount: quality.wordCount,
-      qualityIssues: quality.issues,
+      wordCount: quality.body.wordCount,
+      subjectIssues: quality.subject.issues,
+      qualityIssues: quality.body.issues,
       hasMarketPain: evalResult.hasMarketPain,
       hasSsProduct: evalResult.hasSsProduct,
     });
@@ -231,7 +246,7 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
       return null;
     }
 
-    quality = assessColdEmailQuality(gen.body);
+    quality = assessColdDraftQuality(gen.subject, gen.body, subjCtx);
     evalResult = await evaluate(gen.body, prospectFacts);
 
     const retryFailed =
@@ -244,10 +259,12 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
       await audit('draftCold.quality-rejected', leadId, {
         firstPct: firstSnapshot.evalResult.pct,
         retryPct: evalResult.pct,
-        firstWordCount: firstSnapshot.quality.wordCount,
-        retryWordCount: quality.wordCount,
-        firstQualityIssues: firstSnapshot.quality.issues,
-        retryQualityIssues: quality.issues,
+        firstWordCount: firstSnapshot.quality.body.wordCount,
+        retryWordCount: quality.body.wordCount,
+        firstSubjectIssues: firstSnapshot.quality.subject.issues,
+        retrySubjectIssues: quality.subject.issues,
+        firstQualityIssues: firstSnapshot.quality.body.issues,
+        retryQualityIssues: quality.body.issues,
         retryHasMarketPain: evalResult.hasMarketPain,
         retryHasSsProduct: evalResult.hasSsProduct,
         firstGenericSentences: firstSnapshot.evalResult.genericSentences,

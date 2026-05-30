@@ -8,7 +8,7 @@ import {
   COLD_EMAIL_EVALUATOR_SYSTEM,
   COLD_EMAIL_SYSTEM,
 } from '../../src/prompts/coldEmail.js';
-import { assessColdEmailQuality } from '../../src/outreach/coldEmailQuality.js';
+import { assessColdDraftQuality } from '../../src/outreach/coldEmailQuality.js';
 
 const MODEL = 'claude-sonnet-4-5-20250929';
 const GEN_MAX_TOKENS = 1536;
@@ -207,7 +207,13 @@ describe('cold email — solo sober-living Asheville (claimed)', () => {
     expect(outBody).toMatch(/Sobriety Select/i);
     expect(pct).toBeGreaterThanOrEqual(60);
     expect(subjectWordCount(subject)).toBeLessThanOrEqual(6);
-    expect(assessColdEmailQuality(outBody).ok).toBe(true);
+    expect(assessColdDraftQuality(subject, outBody, {
+      facilityName: lead.name,
+      city: lead.city,
+      state: lead.state,
+      ownerName: enrichment.ownerName,
+      services: lead.services,
+    }).ok).toBe(true);
   });
 });
 
@@ -265,7 +271,13 @@ describe('cold email — large Houston IOP (premium, hiring)', () => {
     expect(outBody).toMatch(/124%/);
     expect(pct).toBeGreaterThanOrEqual(60);
     expect(subjectWordCount(subject)).toBeLessThanOrEqual(6);
-    expect(assessColdEmailQuality(outBody).ok).toBe(true);
+    expect(assessColdDraftQuality(subject, outBody, {
+      facilityName: lead.name,
+      city: lead.city,
+      state: lead.state,
+      ownerName: enrichment.ownerName,
+      services: lead.services,
+    }).ok).toBe(true);
   });
 });
 
@@ -318,6 +330,12 @@ describe('cold email — Cincinnati MAT clinic (select, directories)', () => {
     expect(outBody).toMatch(/Psychology Today|directories|visible/i);
     expect(pct).toBeGreaterThanOrEqual(60);
     expect(subjectWordCount(subject)).toBeLessThanOrEqual(6);
-    expect(assessColdEmailQuality(outBody).ok).toBe(true);
+    expect(assessColdDraftQuality(subject, outBody, {
+      facilityName: lead.name,
+      city: lead.city,
+      state: lead.state,
+      ownerName: enrichment.ownerName,
+      services: lead.services,
+    }).ok).toBe(true);
   });
 });

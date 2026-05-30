@@ -54,7 +54,17 @@ HARD RULES:
    d. SS IDENTITY + FIT — ONE paragraph (2–3 sentences): who Sobriety Select is, how discovery works (region + insurance, rich profiles), why it complements their existing outreach without another bidding war. Mention 2–3 concrete benefits tailored to THIS facility. Prefer concise prose over bullet lists (healthcare buyers skim past bullet dumps).
    e. CTA — ONE soft closing line (see rule 6).
    Opening example (adapt, do not copy): "Tim, saw Aspire is bringing on 10 new clinical roles in Orlando. Right now those Orlando family searches are landing on your competitors instead of you."
-4. Subject: max 6 words, lowercase, no questions, no spam hype.
+4. SUBJECT LINE (colleague tone, not vendor pitch — max 6 words, max 50 characters, all lowercase, no question marks, no exclamation points):
+   Sound like a note about THEIR census/intake situation, not a product pitch. The subject must include at least one prospect token: city, distinctive facility word, owner first name, or service line (IOP, MAT, sober living).
+   NEVER use: "Increase Visibility", Sobriety Select / sobrietyselect.com, "visibility", "directory placement", ALL CAPS, hype, or spam triggers ("Act Now", "Guaranteed", "Free").
+   LEGACY SUBJECTS TO AVOID (0% reply rate in prior campaigns): "Increase Visibility on SobrietySelect.com!" — do not emulate.
+   Pick ONE formula based on the lead's strongest signal (prefer pain-point over generic):
+   - Directory/census gap: "{city} families reaching competitors" | "{city} intake gap" | "{facility-short} census gap"
+   - Hiring/expansion: "{N} {city} hires, open beds" | "{city} expansion intake pipeline"
+   - Service-specific: "{city} {service} census pipeline" | "{city} mat intake gap"
+   - Owner-led (when name known): "{firstname} — {city} family searches"
+   - Market pressure (select/premium): "{city} paid search pressure" (use sparingly)
+   Follow-up threads use "Re: {this subject}" — write it so a day-3 bump still makes sense in the same thread.
 5. Body: 130–165 words. HARD MINIMUM 120 words. Four short prose paragraphs (beats a–d) plus CTA. Value-packed: prospect-specific + market proof + SS identity before the ask.
 6. End with ONE soft CTA referencing something specific about this prospect. Do not reuse stock closings.
    When the user message includes a BOOKING LINK: close with a soft discovery-call ask and paste that exact URL once as plain text. Include one prospect-specific token. Do not also offer calendar day/time options.
@@ -71,7 +81,7 @@ IF NO OWNER NAME: compensate with more facility/city/signal specifics.
 GOLD-STANDARD SHAPE (~145 words — adapt every token to the prospect):
 "Robert, Tri County Human Services serves Wauchula with almost no directory presence today, and families searching Hardee County are mostly reaching other centers first. Paid search for drug rehab facility keywords is up 124% year over year, and drug rehab terms up 62%. Most operators have only a handful of channels they can advertise on, and those keep getting pricier, which makes census harder to predict when you are competing on the same auctions as everyone else in your region. Sobriety Select is a map-forward directory where families search by region and insurance, not keyword bids. Partnership means a complete profile with services, insurance, and verified reviews so inquiries are better aligned, plus a channel that complements your existing outreach instead of another paid-search auction. If a quick look makes sense for Tri County, grab a time here: https://..."
 
-SELF-CHECK before output: (1) word count 130–165? (2) market-pain paragraph present? (3) SS identity paragraph present? (4) ≥3 prospect-specific facts? (5) no SS pricing?
+SELF-CHECK before output: (1) subject ≤6 words, ≤50 chars, prospect token, no vendor pitch? (2) body 130–165 words? (3) market-pain paragraph? (4) SS identity paragraph? (5) ≥3 prospect-specific facts? (6) no SS pricing?
 
 Output ONLY valid JSON. No preamble, no markdown fences.
 Schema: { "subject": string, "body": string, "specific_facts_used": string[] }`;
@@ -130,6 +140,37 @@ const isBigSpender = (signals: Enrichment['signals']): boolean => {
   return score > 0 || tech.techStack?.googleAds === true || tech.techStack?.callrail === true;
 };
 
+type SignalsShape = {
+  hiring?: { active?: boolean; rolesPostedRecently?: number; roleTitles?: string[] };
+  competingDirectories?: { missingFromAll?: boolean; onAnyDirectory?: boolean };
+  techStack?: { googleAds?: boolean; callrail?: boolean; bigSpenderScore?: number };
+};
+
+const readSignals = (signals: Enrichment['signals']): SignalsShape => {
+  if (signals === null || typeof signals !== 'object' || Array.isArray(signals)) return {};
+  return signals as SignalsShape;
+};
+
+const buildSubjectHint = (lead: Lead, enrichment: Enrichment): string => {
+  const sig = readSignals(enrichment.signals);
+  const city = lead.city;
+  const service = lead.services[0]?.toLowerCase() ?? 'treatment';
+  const ownerFirst = enrichment.ownerName?.trim().split(/\s+/)[0] ?? null;
+
+  if (sig.hiring?.active === true) {
+    const n = sig.hiring.rolesPostedRecently ?? sig.hiring.roleTitles?.length ?? 0;
+    const count = n > 0 ? String(n) : 'new';
+    return `SUBJECT hint: hiring signal — try "${count} ${city.toLowerCase()} hires, open beds" or "${city.toLowerCase()} expansion intake pipeline".`;
+  }
+  if (sig.competingDirectories?.missingFromAll === true) {
+    return `SUBJECT hint: directory gap — try "${city.toLowerCase()} families reaching competitors" or "${city.toLowerCase()} intake gap".`;
+  }
+  if (ownerFirst !== null && ownerFirst.length >= 3) {
+    return `SUBJECT hint: owner known — try "${ownerFirst.toLowerCase()} — ${city.toLowerCase()} family searches" or "${city.toLowerCase()} ${service} census gap".`;
+  }
+  return `SUBJECT hint: try "${city.toLowerCase()} intake gap" or "${city.toLowerCase()} census pipeline". Never "Increase Visibility" or brand names.`;
+};
+
 const buildMarketPainHint = (enrichment: Enrichment): string => {
   const tier = enrichment.expectedProduct;
   const bigSpender = isBigSpender(enrichment.signals);
@@ -173,6 +214,7 @@ export const buildColdEmailUser = (
     `\nINTERNAL TIER (for tone/angle only — NEVER mention tier name, price, or any dollar amount in the email): ${enrichment.expectedProduct}`,
     `\nWrite the email per the tier's angle. If any intelligence signal is high-leverage (missing from competing directories, active hiring, or big spender tech stack), prefer it as your lead observation.`,
     `\n${buildMarketPainHint(enrichment)}`,
+    `\n${buildSubjectHint(lead, enrichment)}`,
     '\nInclude the SS IDENTITY paragraph (who Sobriety Select is, map-forward discovery, rich profiles) before the CTA. Target 130–165 words total.',
   ].join('');
 
