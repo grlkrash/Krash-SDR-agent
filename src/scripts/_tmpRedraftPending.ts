@@ -11,7 +11,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { draftColdEmail } from '../outreach/draftCold.js';
 import {
-  assessColdEmailQuality,
+  assessColdDraftQuality,
   bodyWordCount,
   COLD_BODY_MIN_WORDS,
   COLD_BODY_TARGET_MIN,
@@ -114,7 +114,7 @@ if (targets.length === 0) {
         }
         const draft = await prisma.draft.findUnique({
           where: { id: draftId },
-          select: { body: true, personalizationPct: true },
+          select: { body: true, subject: true, personalizationPct: true, lead: { select: { name: true, city: true, state: true, services: true } } },
         });
         if (draft === null) {
           fail += 1;
@@ -123,7 +123,16 @@ if (targets.length === 0) {
 
         const wc = bodyWordCount(draft.body);
         wordCounts.push(wc);
-        const quality = assessColdEmailQuality(draft.body);
+        const quality = assessColdDraftQuality(
+          draft.subject ?? '',
+          draft.body,
+          {
+            facilityName: draft.lead.name,
+            city: draft.lead.city,
+            state: draft.lead.state,
+            services: draft.lead.services,
+          },
+        );
         const leaks = scanLeaks(draft.body, [lead?.name ?? '']);
 
         if (leaks.length > 0) {
@@ -131,7 +140,7 @@ if (targets.length === 0) {
           console.log(`LEAK  ${lead?.name} — ${leaks.map((h) => h.label).join(', ')}`);
         }
         if (!quality.ok) {
-          qualityFails.push(`${lead?.name}: ${quality.issues.join(', ')} (${wc}w)`);
+          qualityFails.push(`${lead?.name}: body=${quality.body.issues.join(',')} subject=${quality.subject.issues.join(',')} (${wc}w)`);
         }
 
         console.log(
@@ -193,12 +202,17 @@ if (targets.length === 0) {
   // Acceptance: all new pending colds from this run should pass quality + leak gates
   const newPending = await prisma.draft.findMany({
     where: { kind: 'cold', status: 'pending' },
-    select: { body: true, lead: { select: { name: true } } },
+    select: { body: true, subject: true, lead: { select: { name: true, city: true, state: true, services: true } } },
   });
   let acceptQuality = 0;
   let acceptLeak = 0;
   for (const d of newPending) {
-    if (!assessColdEmailQuality(d.body).ok) acceptQuality += 1;
+    if (!assessColdDraftQuality(d.subject ?? '', d.body, {
+      facilityName: d.lead.name,
+      city: d.lead.city,
+      state: d.lead.state,
+      services: d.lead.services,
+    }).ok) acceptQuality += 1;
     if (scanLeaks(d.body, [d.lead.name]).length > 0) acceptLeak += 1;
   }
   console.log('\n=== acceptance (all pending colds in queue) ===');
