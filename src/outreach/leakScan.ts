@@ -1,8 +1,12 @@
 // Post-generation guard for cold-email bodies. The COLD_EMAIL_SYSTEM prompt
-// forbids prices, dollar amounts, "Claimed/Select/Premium" tier names, and
+// forbids SS prices, dollar amounts, "Claimed/Select/Premium" tier names, and
 // per-year/month framings — but prompt obedience is not enforced. This is the
 // hard binary gate that runs after each generate() and skips the draft when
-// the model violates the absolute pricing rule.
+// the model violates the absolute SS-pricing rule.
+//
+// Industry YoY stats about paid-search inflation (124%/62%) are ALLOWED in the
+// email; those sentences are stripped from the scan copy so "cost" in an
+// industry-context sentence does not false-positive.
 //
 // `ignoreSubstrings` exists so callers can strip expected-legitimate
 // occurrences (e.g. a facility named "Premium Recovery") before matching,
@@ -10,12 +14,19 @@
 
 export type LeakHit = { label: string; match: string };
 
+// Company name contains "Select" — strip before tier-name scan.
+const BRAND_SAFE_PHRASES = ['Sobriety Select'] as const;
+
 const LEAK_PATTERNS: ReadonlyArray<{ label: string; rx: RegExp }> = [
   { label: 'dollar amount', rx: /\$\s?\d/ },
   { label: 'pricing word', rx: /\b(?:price|pricing|cost|costs|fee|fees|dollars?|USD)\b/i },
   { label: 'per-year/month framing', rx: /\b\d[\d,]*\s*(?:\/\s*(?:yr|mo|year|month)|per\s+(?:year|month))\b/i },
   { label: 'capitalized tier name', rx: /\b(?:Claimed|Select|Premium)\b/ },
 ];
+
+// Sentences citing deck-verified industry inflation stats — safe for leak scan.
+const INDUSTRY_YOY_STAT_RX = /\d{1,3}\s*%\s*(?:year\s*over\s*year|year-over-year|\byoy\b)/i;
+const INDUSTRY_CONTEXT_RX = /\b(?:paid search|keyword auction|drug rehab|advertis|google ads|restricted channel|few places)\b/i;
 
 const stripSubstrings = (body: string, ignoreSubstrings: string[]): string => {
   let cleaned = body;
@@ -27,11 +38,30 @@ const stripSubstrings = (body: string, ignoreSubstrings: string[]): string => {
   return cleaned;
 };
 
+// Remove allowed industry-stat sentences from the scan copy only — the live
+// email body is unchanged.
+const stripIndustryStatSentences = (body: string): string => {
+  const sentences = body.split(/(?<=[.!?])\s+/);
+  const kept = sentences.filter((sentence) => {
+    const trimmed = sentence.trim();
+    if (trimmed === '') return false;
+    const isIndustryStat =
+      INDUSTRY_YOY_STAT_RX.test(trimmed) && INDUSTRY_CONTEXT_RX.test(trimmed);
+    return !isIndustryStat;
+  });
+  return kept.join(' ');
+};
+
+const prepareForLeakScan = (body: string, ignoreSubstrings: string[]): string => {
+  const withoutSafe = stripSubstrings(body, [...BRAND_SAFE_PHRASES, ...ignoreSubstrings]);
+  return stripIndustryStatSentences(withoutSafe);
+};
+
 export const scanLeaks = (
   body: string,
   ignoreSubstrings: string[] = [],
 ): LeakHit[] => {
-  const cleaned = stripSubstrings(body, ignoreSubstrings);
+  const cleaned = prepareForLeakScan(body, ignoreSubstrings);
   return LEAK_PATTERNS.flatMap((p) => {
     const m = cleaned.match(p.rx);
     return m === null ? [] : [{ label: p.label, match: m[0] }];

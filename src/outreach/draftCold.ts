@@ -8,6 +8,10 @@ import {
   COLD_EMAIL_SYSTEM,
   buildColdEmailUser,
 } from '../prompts/coldEmail.js';
+import {
+  assessColdEmailQuality,
+  buildQualityRetryFeedback,
+} from './coldEmailQuality.js';
 import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
 import { scanLeaks } from './leakScan.js';
@@ -19,16 +23,10 @@ const cached = (text: string): Array<TextBlockParam> => [
 const MODEL = 'claude-sonnet-4-5-20250929';
 const GEN_MAX_TOKENS = 1536;
 const GEN_TEMPERATURE = 0.7;
-const EVAL_MAX_TOKENS = 512;
+const EVAL_MAX_TOKENS = 768;
 const EVAL_TEMPERATURE = 0.3;
-// Contract is 60% — first attempt below this triggers a retry.
 const RETRY_TRIGGER_PCT = 60;
-// Evaluator runs strict; 58 on this grader is comfortably ≥60% real personalization.
 const ACCEPT_FLOOR_PCT = 58;
-// Past this many rejected cold drafts on a single lead, stop re-drafting.
-// Sonia has effectively said "this lead is unworkable" — burning more Claude
-// calls won't unstick it. She can kill the lead from /queue, or fix the
-// underlying enrichment data and bump rejected drafts back via /undo.
 const MAX_REJECTS_PER_LEAD = 3;
 
 const prisma = new PrismaClient({
@@ -45,10 +43,24 @@ type GenOutput = z.infer<typeof GenSchema>;
 const EvalSchema = z.object({
   personalization_pct: z.number(),
   generic_sentences: z.array(z.string()).default([]),
+  has_market_pain_context: z.boolean().default(false),
+  has_ss_product_context: z.boolean().default(false),
+  word_count: z.number().optional(),
 });
-type EvalOutput = { pct: number; genericSentences: string[] };
+type EvalOutput = {
+  pct: number;
+  genericSentences: string[];
+  hasMarketPain: boolean;
+  hasSsProduct: boolean;
+};
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+type AttemptSnapshot = {
+  gen: GenOutput;
+  quality: ReturnType<typeof assessColdEmailQuality>;
+  evalResult: EvalOutput;
+};
 
 const audit = (action: string, leadId: string, meta: Prisma.InputJsonValue): Promise<unknown> =>
   prisma.auditLog.create({ data: { action, entity: 'lead', entityId: leadId, meta } });
@@ -76,7 +88,47 @@ const evaluate = async (body: string, prospectFacts: unknown): Promise<EvalOutpu
     }],
   });
   const parsed = EvalSchema.parse(extractJSON(msg));
-  return { pct: parsed.personalization_pct, genericSentences: parsed.generic_sentences };
+  return {
+    pct: parsed.personalization_pct,
+    genericSentences: parsed.generic_sentences,
+    hasMarketPain: parsed.has_market_pain_context,
+    hasSsProduct: parsed.has_ss_product_context,
+  };
+};
+
+const needsRetry = (quality: ReturnType<typeof assessColdEmailQuality>, evalResult: EvalOutput): boolean =>
+  !quality.ok
+  || evalResult.pct < RETRY_TRIGGER_PCT
+  || !evalResult.hasSsProduct
+  || !evalResult.hasMarketPain;
+
+const buildRetryFeedback = (
+  quality: ReturnType<typeof assessColdEmailQuality>,
+  evalResult: EvalOutput,
+): string => {
+  const parts: string[] = [];
+
+  if (evalResult.pct < RETRY_TRIGGER_PCT) {
+    parts.push(
+      `That draft scored only ${evalResult.pct}% personalization. The evaluator flagged these as generic sentences: ${JSON.stringify(evalResult.genericSentences)}. Replace every generic sentence with one containing a specific fact about THIS prospect (exact review count, named service, owner name, named missing directory, detected tool, or hiring role).`,
+    );
+  }
+  if (!evalResult.hasMarketPain) {
+    parts.push(
+      'Missing MARKET PAIN paragraph: add 2–3 sentences on industry pressure (paid-search YoY 124%/62% for select/premium, or restricted ad channels for smaller operators) and bridge to this prospect\'s city/market.',
+    );
+  }
+  if (!evalResult.hasSsProduct) {
+    parts.push(
+      'Missing SS IDENTITY paragraph: explain who Sobriety Select is (map-forward directory, region + insurance discovery, rich profiles, complements existing marketing) in 2–3 sentences before the CTA.',
+    );
+  }
+  if (!quality.ok) {
+    parts.push(buildQualityRetryFeedback(quality));
+  }
+
+  parts.push('Output the same JSON schema. Target 130–165 words.');
+  return parts.join(' ');
 };
 
 export const draftColdEmail = async (leadId: string): Promise<string | null> => {
@@ -88,9 +140,6 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
   const { enrichment, ...leadOnly } = lead;
   if (enrichment === null) return null;
 
-  // Hard skip: operator killed this lead. Defense in depth — killLead also
-  // writes a Suppression row when an email is known, but Lead.doNotContact
-  // catches the case where neither email nor phone was known.
   if (lead.doNotContact) {
     await audit('draftCold.do-not-contact', leadId, {});
     return null;
@@ -107,9 +156,6 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
   });
   if (existing !== null) return null;
 
-  // Reject-cap: after N rejected cold drafts, the model isn't going to crack
-  // this lead with more attempts. Stop burning Claude tokens until the
-  // operator either kills the lead or restores a rejected draft via /undo.
   const rejectedCount = await prisma.draft.count({
     where: { leadId, kind: 'cold', status: 'rejected' },
   });
@@ -133,11 +179,6 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
     return null;
   }
 
-  // Re-draft path: if every prior cold draft for this lead was rejected, the
-  // operator's most recent reject reason becomes one extra paragraph appended
-  // to the user message. The system prompt stays cached, so this is ~60
-  // additional input tokens gated on `rejectReason !== null` — paused drafts
-  // are excluded by `status: 'rejected'`.
   const previousRejected = await prisma.draft.findFirst({
     where: { leadId, kind: 'cold', status: 'rejected', rejectReason: { not: null } },
     orderBy: { createdAt: 'desc' },
@@ -157,40 +198,59 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
 
   let gen = await generate([{ role: 'user', content: baseUser }]);
 
-  // Hard pricing/tier-name gate. The system prompt forbids these but model
-  // obedience isn't enforced — if the model leaked, skip rather than retry:
-  // a leak indicates a deeper failure mode worth surfacing in AuditLog. The
-  // facility name is passed as `ignoreSubstrings` so a center literally
-  // named "Premium Recovery" doesn't trip the tier-name regex.
   const firstLeaks = scanLeaks(gen.body, [leadOnly.name]);
   if (firstLeaks.length > 0) {
     await audit('draftCold.leak-detected', leadId, { attempt: 'first', hits: firstLeaks });
     return null;
   }
 
+  let quality = assessColdEmailQuality(gen.body);
   let evalResult = await evaluate(gen.body, prospectFacts);
 
-  if (evalResult.pct < RETRY_TRIGGER_PCT) {
+  if (needsRetry(quality, evalResult)) {
     const firstAttempt = gen;
-    const firstPct = evalResult.pct;
-    const firstGenericSentences = evalResult.genericSentences;
-    const retryFeedback = `That draft scored only ${firstPct}% personalization. The evaluator flagged these as generic sentences: ${JSON.stringify(firstGenericSentences)}. Rewrite the email. Replace every generic sentence with one containing a specific fact about THIS prospect (exact review count, named service, owner name, named missing directory, detected tool, or hiring role). Output the same JSON schema.`;
+    const firstSnapshot: AttemptSnapshot = { gen, quality, evalResult };
+
+    await audit('draftCold.retry-triggered', leadId, {
+      firstPct: evalResult.pct,
+      wordCount: quality.wordCount,
+      qualityIssues: quality.issues,
+      hasMarketPain: evalResult.hasMarketPain,
+      hasSsProduct: evalResult.hasSsProduct,
+    });
+
     gen = await generate([
       { role: 'user', content: baseUser },
       { role: 'assistant', content: JSON.stringify(firstAttempt) },
-      { role: 'user', content: retryFeedback },
+      { role: 'user', content: buildRetryFeedback(quality, evalResult) },
     ]);
+
     const retryLeaks = scanLeaks(gen.body, [leadOnly.name]);
     if (retryLeaks.length > 0) {
       await audit('draftCold.leak-detected', leadId, { attempt: 'retry', hits: retryLeaks });
       return null;
     }
+
+    quality = assessColdEmailQuality(gen.body);
     evalResult = await evaluate(gen.body, prospectFacts);
-    if (evalResult.pct < ACCEPT_FLOOR_PCT) {
-      await audit('draftCold.score-too-low', leadId, {
-        firstPct,
+
+    const retryFailed =
+      evalResult.pct < ACCEPT_FLOOR_PCT
+      || !quality.ok
+      || !evalResult.hasSsProduct
+      || !evalResult.hasMarketPain;
+
+    if (retryFailed) {
+      await audit('draftCold.quality-rejected', leadId, {
+        firstPct: firstSnapshot.evalResult.pct,
         retryPct: evalResult.pct,
-        firstGenericSentences,
+        firstWordCount: firstSnapshot.quality.wordCount,
+        retryWordCount: quality.wordCount,
+        firstQualityIssues: firstSnapshot.quality.issues,
+        retryQualityIssues: quality.issues,
+        retryHasMarketPain: evalResult.hasMarketPain,
+        retryHasSsProduct: evalResult.hasSsProduct,
+        firstGenericSentences: firstSnapshot.evalResult.genericSentences,
         retryGenericSentences: evalResult.genericSentences,
       });
       return null;

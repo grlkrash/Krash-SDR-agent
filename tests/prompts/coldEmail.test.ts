@@ -8,11 +8,12 @@ import {
   COLD_EMAIL_EVALUATOR_SYSTEM,
   COLD_EMAIL_SYSTEM,
 } from '../../src/prompts/coldEmail.js';
+import { assessColdEmailQuality } from '../../src/outreach/coldEmailQuality.js';
 
 const MODEL = 'claude-sonnet-4-5-20250929';
 const GEN_MAX_TOKENS = 1536;
 const GEN_TEMPERATURE = 0.7;
-const EVAL_MAX_TOKENS = 512;
+const EVAL_MAX_TOKENS = 768;
 const EVAL_TEMPERATURE = 0.3;
 
 const GenSchema = z.object({
@@ -24,6 +25,8 @@ const GenSchema = z.object({
 const EvalSchema = z.object({
   personalization_pct: z.number(),
   generic_sentences: z.array(z.string()).default([]),
+  has_market_pain_context: z.boolean().default(true),
+  has_ss_product_context: z.boolean().default(true),
 });
 
 const EMPTY_SIGNALS = {
@@ -73,6 +76,9 @@ const runColdEmailFlow = async (
         personalization_pct: evalPct,
         generic_sentences: [],
         specific_sentences: [],
+        has_market_pain_context: true,
+        has_ss_product_context: true,
+        word_count: genPayload.body.split(/\s+/).length,
         reasoning: 'test',
       });
     }
@@ -146,6 +152,16 @@ const baseEnrichment = (overrides: Partial<Enrichment>): Enrichment => ({
 const subjectWordCount = (subject: string): number =>
   subject.trim().split(/\s+/).filter((w) => w.length > 0).length;
 
+describe('buildColdEmailUser', () => {
+  it('includes market pain hint for select tier', () => {
+    const lead = baseLead({ city: 'Houston', state: 'TX' });
+    const enrichment = baseEnrichment({ expectedProduct: 'select' });
+    const prompt = buildColdEmailUser(lead, enrichment);
+    expect(prompt).toMatch(/124%/);
+    expect(prompt).toMatch(/SS IDENTITY/i);
+  });
+});
+
 describe('cold email — solo sober-living Asheville (claimed)', () => {
   afterEach(() => {
     setClaudeMock(null);
@@ -166,26 +182,32 @@ describe('cold email — solo sober-living Asheville (claimed)', () => {
       painPoints: { no_schema_markup: true },
     });
 
-    const { subject, body, pct } = await runColdEmailFlow(
+    const body = [
+      'Sarah, your Asheville sober living home has 14 Google reviews families trust, and families searching Buncombe County often miss operators your size.',
+      'Most small sober living homes have only a handful of channels to reach families online, and those keep getting pricier or harder to access in North Carolina.',
+      'That makes every aligned inquiry count when you are trying to keep beds full in Asheville.',
+      'Sobriety Select is a map-forward directory where families search by region and insurance, not keyword bids.',
+      'Partnership means a complete profile with services, photos, and verified reviews so inquiries are better aligned, plus a channel that complements your existing outreach without another paid-search auction.',
+      'Does this week or next work for a quick look at what families in Asheville see when they search for sober living?',
+    ].join(' ');
+
+    const { subject, body: outBody, pct } = await runColdEmailFlow(
       lead,
       enrichment,
       {
         subject: 'asheville sober living intake',
-        body: [
-          'Sarah, your Asheville sober living home has 14 Google reviews families trust.',
-          'We connect families actively searching for a bed with centers that have open beds.',
-          'Your site still lacks schema markup, so Asheville searches may not surface you clearly.',
-          'Does this week or next work for a quick look at Asheville intake?',
-        ].join(' '),
-        specific_facts_used: ['Asheville', 'Sarah', 'schema'],
+        body,
+        specific_facts_used: ['Asheville', 'Sarah', 'schema', '14 reviews'],
       },
       72,
     );
 
-    expect(body).toMatch(/Asheville/i);
-    expect(body).toMatch(/Sarah|Kim/);
+    expect(outBody).toMatch(/Asheville/i);
+    expect(outBody).toMatch(/Sarah|Kim/);
+    expect(outBody).toMatch(/Sobriety Select/i);
     expect(pct).toBeGreaterThanOrEqual(60);
     expect(subjectWordCount(subject)).toBeLessThanOrEqual(6);
+    expect(assessColdEmailQuality(outBody).ok).toBe(true);
   });
 });
 
@@ -213,30 +235,37 @@ describe('cold email — large Houston IOP (premium, hiring)', () => {
           roleTitles: ['Clinical Director', 'Intake Coordinator'],
           rolesPostedRecently: 2,
         },
+        techStack: { ...EMPTY_SIGNALS.techStack, googleAds: true, bigSpenderScore: 3 },
       },
     });
 
-    const { subject, body, pct } = await runColdEmailFlow(
+    const body = [
+      'Your Houston IOP program shows 230 Google reviews, strong proof families trust you, and you are hiring a Clinical Director and Intake Coordinator to support growth.',
+      'Paid search for drug rehab facility keywords is up 124% year over year, and drug rehab terms up 62%, so Houston operators compete on the same expensive auctions while trying to fill new intake capacity.',
+      'That pressure makes census harder to predict even for strong programs like Gulf Coast IOP.',
+      'Sobriety Select is a map-forward directory where families search by region and insurance, not keyword bids.',
+      'Partnership means rich profiles with insurance, services, and verified reviews so inquiries are better aligned, plus lead capture that complements your existing Google Ads spend without another bidding war.',
+      'Given the hiring push, does Tuesday or Wednesday work for a brief census conversation about what Houston families see when they search?',
+    ].join(' ');
+
+    const { subject, body: outBody, pct } = await runColdEmailFlow(
       lead,
       enrichment,
       {
         subject: 'houston iop census pipeline',
-        body: [
-          'Your Houston IOP program shows up with 230 Google reviews, strong proof families trust you.',
-          'We connect families actively searching for treatment with centers that have open beds.',
-          'You are hiring a Clinical Director and Intake Coordinator, so keeping Houston intake full matters now.',
-          'Given the hiring push, does Tuesday or Wednesday work for a brief census conversation?',
-        ].join(' '),
-        specific_facts_used: ['Houston', 'IOP', 'hiring'],
+        body,
+        specific_facts_used: ['Houston', 'IOP', 'hiring', '124%'],
       },
       78,
     );
 
-    expect(body).toMatch(/Houston/i);
-    expect(body).toMatch(/IOP/i);
-    expect(body).toMatch(/hiring|expanding/i);
+    expect(outBody).toMatch(/Houston/i);
+    expect(outBody).toMatch(/IOP/i);
+    expect(outBody).toMatch(/hiring|expanding/i);
+    expect(outBody).toMatch(/124%/);
     expect(pct).toBeGreaterThanOrEqual(60);
     expect(subjectWordCount(subject)).toBeLessThanOrEqual(6);
+    expect(assessColdEmailQuality(outBody).ok).toBe(true);
   });
 });
 
@@ -264,26 +293,31 @@ describe('cold email — Cincinnati MAT clinic (select, directories)', () => {
       },
     });
 
-    const { subject, body, pct } = await runColdEmailFlow(
+    const body = [
+      'Dr. Walsh, your Cincinnati MAT clinic serves a critical need with 8 Google reviews so far, and you are not on Psychology Today so directory searches in Cincinnati route to competitors instead of you.',
+      'Paid search for drug rehab terms is up 62% year over year, and most MAT operators have only a few places they can advertise to reach families searching in Ohio.',
+      'That makes it harder to build a steady intake pipeline even when your clinical program is strong.',
+      'Sobriety Select is a map-forward directory where families search by region and insurance, not keyword proximity alone.',
+      'Partnership means a complete profile with insurance, program details, and verified reviews so inquiries are better aligned, plus regional discovery that complements your existing outreach.',
+      'Would Tuesday or Thursday work to see what families in Cincinnati find when they search for MAT treatment?',
+    ].join(' ');
+
+    const { subject, body: outBody, pct } = await runColdEmailFlow(
       lead,
       enrichment,
       {
         subject: 'cincinnati mat intake gap',
-        body: [
-          'Dr. Walsh, your Cincinnati MAT clinic serves a critical need with 8 Google reviews so far.',
-          'We connect families actively searching for treatment with centers that have open beds.',
-          'You are not on Psychology Today, so Cincinnati directory searches route to competitors instead of you.',
-          'Would Tuesday or Thursday work to see what families in Cincinnati find when they search?',
-        ].join(' '),
+        body,
         specific_facts_used: ['MAT', 'Cincinnati', 'Walsh', 'Psychology Today'],
       },
       80,
     );
 
-    expect(body).toMatch(/Cincinnati/i);
-    expect(body).toMatch(/Walsh/i);
-    expect(body).toMatch(/Psychology Today|directories|visible/i);
+    expect(outBody).toMatch(/Cincinnati/i);
+    expect(outBody).toMatch(/Walsh/i);
+    expect(outBody).toMatch(/Psychology Today|directories|visible/i);
     expect(pct).toBeGreaterThanOrEqual(60);
     expect(subjectWordCount(subject)).toBeLessThanOrEqual(6);
+    expect(assessColdEmailQuality(outBody).ok).toBe(true);
   });
 });
