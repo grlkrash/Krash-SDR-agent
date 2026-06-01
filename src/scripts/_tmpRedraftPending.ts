@@ -22,8 +22,16 @@ const APPLY = process.env.APPLY === '1';
 const LIMIT = process.env.LIMIT !== undefined ? Number(process.env.LIMIT) : null;
 const CONCURRENCY = Number(process.env.CONCURRENCY) || 2;
 const PACING_MS = Number(process.env.PACING_MS) || 1500;
-const REJECT_REASON = 'batch-redraft: value-packed prompt upgrade';
+const REJECT_REASON = 'batch-redraft: free-listing prompt upgrade';
 const MAX_REJECTS_PER_LEAD = 3;
+
+// Skip pending drafts that already carry the free-listing entry offer (avoids
+// re-redrafting a lead we just regenerated in a prior LIMIT batch).
+const FREE_LISTING_HOOK_RX =
+  /\bfree\b[^\n]{0,48}\b(?:profile|listing|basic)\b|\b(?:profile|listing)[^\n]{0,48}\bfree\b|\b(?:claim(?:ed|ing)?|verified and live)[^\n]{0,72}\b(?:profile|listing)\b|\bbasic (?:profile|listing)[^\n]{0,48}\b(?:claim|built|live|from public)\b/i;
+
+const needsFreeListingRedraft = (body: string | null | undefined): boolean =>
+  !FREE_LISTING_HOOK_RX.test(body ?? '');
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -36,15 +44,18 @@ const pending = await prisma.draft.findMany({
   select: {
     id: true,
     leadId: true,
+    body: true,
     lead: { select: { name: true, city: true, state: true } },
   },
   orderBy: { createdAt: 'asc' },
 });
 
-const targets = LIMIT !== null && !Number.isNaN(LIMIT) ? pending.slice(0, LIMIT) : pending;
+const stale = pending.filter((d) => needsFreeListingRedraft(d.body));
+const targets = LIMIT !== null && !Number.isNaN(LIMIT) ? stale.slice(0, LIMIT) : stale;
 
 console.log(`Mode:     ${APPLY ? 'APPLY (reject + redraft)' : 'dry-run'}`);
 console.log(`Pending:  ${pending.length} cold draft(s)`);
+console.log(`Needs redraft (no free-listing hook): ${stale.length}`);
 console.log(`Targets:  ${targets.length}\n`);
 
 if (targets.length === 0) {
@@ -68,6 +79,12 @@ if (targets.length === 0) {
   const toRedraft: string[] = [];
 
   for (const d of targets) {
+    if (!needsFreeListingRedraft(d.body)) {
+      console.log(`SKIP already has free-listing hook: ${d.lead.name}`);
+      skipped += 1;
+      continue;
+    }
+
     const priorRejects = await prisma.draft.count({
       where: { leadId: d.leadId, kind: 'cold', status: 'rejected' },
     });
