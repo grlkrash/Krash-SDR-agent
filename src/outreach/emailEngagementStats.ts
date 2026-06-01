@@ -45,11 +45,17 @@ export type BucketStats = {
 // Cold-call disposition stats from the cold.call-touch audit (logged via the
 // /cold-call page; each row also writes a HubSpot call engagement).
 export type CallStats = {
+  // App-logged cold-call cadence dispositions (cold.call-touch).
   attempts: number;
   connected: number;
   noAnswer: number;
   prospects: number;
   connectRate: number | null;
+  // All outbound calls synced from HubSpot — the account-wide superset, so it
+  // also captures calls dispositioned directly in HubSpot (hubspot.call-synced).
+  hubspotAttempts: number;
+  hubspotConnected: number;
+  hubspotConnectRate: number | null;
 };
 
 export type EngagementOverview = {
@@ -224,6 +230,7 @@ type EngagementData = {
   bookedDraftIds: Set<string>;
   bookedLeadIds: Set<string>;
   coldCallTouches: ColdCallTouchEvent[];
+  hubspotCalls: HubspotCallEvent[];
 };
 
 type ColdCallTouchEvent = {
@@ -231,6 +238,8 @@ type ColdCallTouchEvent = {
   leadId: string | null;
   at: Date;
 };
+
+type HubspotCallEvent = { connected: boolean; at: Date };
 
 let cachedData: { payload: EngagementData; expiresAt: number } | null = null;
 
@@ -344,14 +353,37 @@ const loadColdCallTouches = async (): Promise<ColdCallTouchEvent[]> => {
   return events;
 };
 
+const HubspotCallMetaSchema = z.object({
+  connected: z.boolean().optional(),
+  at: z.string().optional(),
+});
+
+const loadHubspotCalls = async (): Promise<HubspotCallEvent[]> => {
+  const rows = await prisma.auditLog.findMany({
+    where: { action: 'hubspot.call-synced' },
+    select: { meta: true, createdAt: true },
+  });
+  const events: HubspotCallEvent[] = [];
+  for (const row of rows) {
+    const parsed = HubspotCallMetaSchema.safeParse(row.meta);
+    if (!parsed.success) continue;
+    const atMs = parsed.data.at === undefined ? NaN : Date.parse(parsed.data.at);
+    const at = Number.isNaN(atMs) ? row.createdAt : new Date(atMs);
+    events.push({ connected: parsed.data.connected === true, at });
+  }
+  return events;
+};
+
 const loadEngagementData = async (): Promise<EngagementData> => {
-  const [drafts, replyEvents, pixelOpenedDraftIds, booked, coldCallTouches] = await Promise.all([
-    loadSentDrafts(),
-    loadReplyEvents(),
-    loadPixelOpenedDraftIds(),
-    loadBookedEvents(),
-    loadColdCallTouches(),
-  ]);
+  const [drafts, replyEvents, pixelOpenedDraftIds, booked, coldCallTouches, hubspotCalls] =
+    await Promise.all([
+      loadSentDrafts(),
+      loadReplyEvents(),
+      loadPixelOpenedDraftIds(),
+      loadBookedEvents(),
+      loadColdCallTouches(),
+      loadHubspotCalls(),
+    ]);
   const repliedDraftIds = new Set(replyEvents.map((e) => e.matchedDraftId));
   return {
     drafts,
@@ -361,6 +393,7 @@ const loadEngagementData = async (): Promise<EngagementData> => {
     bookedDraftIds: booked.bookedDraftIds,
     bookedLeadIds: booked.bookedLeadIds,
     coldCallTouches,
+    hubspotCalls,
   };
 };
 
@@ -500,6 +533,7 @@ const computeTemperature = (
 
 const buildCallStats = (
   touches: ColdCallTouchEvent[],
+  hubspotCalls: HubspotCallEvent[],
   range: EngagementRange,
 ): CallStats => {
   const scoped = touches.filter((t) => draftSentWithinRange(t.at, range));
@@ -512,12 +546,21 @@ const buildCallStats = (
     if (t.leadId !== null) prospects.add(t.leadId);
   }
   const attempts = scoped.length;
+
+  const scopedHs = hubspotCalls.filter((c) => draftSentWithinRange(c.at, range));
+  let hubspotConnected = 0;
+  for (const c of scopedHs) if (c.connected) hubspotConnected += 1;
+  const hubspotAttempts = scopedHs.length;
+
   return {
     attempts,
     connected,
     noAnswer,
     prospects: prospects.size,
     connectRate: ratePct(connected, attempts),
+    hubspotAttempts,
+    hubspotConnected,
+    hubspotConnectRate: ratePct(hubspotConnected, hubspotAttempts),
   };
 };
 
@@ -542,7 +585,7 @@ const buildOverview = (
     replyRate: ratePct(replied, sent),
     bookRate: ratePct(booked, sent),
     byBucket: buildBucketStats(scoped, data.repliedDraftIds, data.pixelOpenedDraftIds, data.bookedDraftIds),
-    callStats: buildCallStats(data.coldCallTouches, range),
+    callStats: buildCallStats(data.coldCallTouches, data.hubspotCalls, range),
     computedAt: new Date().toISOString(),
     openDataNote: OPEN_DATA_NOTE,
     range,

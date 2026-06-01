@@ -60,6 +60,8 @@ export const CRON_JOBS: CronJobDef[] = [
   { name: 'sendApproved', kind: 'interval', intervalMinutes: 10, modulePath: './sendApproved.js', enabled: true },
   // Attribute booked meetings to their sourcing email before the brief runs.
   { name: 'attributeMeetings', kind: 'daily', etHour: 16, etMinute: 45, modulePath: './attributeMeetings.js', enabled: true },
+  // Sync HubSpot call dispositions (incl. calls logged directly in HubSpot).
+  { name: 'syncCallDispositions', kind: 'daily', etHour: 16, etMinute: 50, modulePath: './syncCallDispositions.js', enabled: true },
   { name: 'sendDailyBrief', kind: 'daily', etHour: 17, etMinute: 0, modulePath: './sendDailyBrief.js', enabled: true },
   { name: 'checkCostCaps', kind: 'daily', etHour: 17, etMinute: 30, modulePath: './checkCostCaps.js', enabled: true },
   { name: 'reactivation', kind: 'weekly', etWeekday: 1, etHour: 3, etMinute: 0, modulePath: './reactivation.js', enabled: true },

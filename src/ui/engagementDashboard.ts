@@ -92,29 +92,40 @@ export const renderEngagementRangeFilters = (opts: {
 };
 
 const renderCallPerformance = (stats: CallStats): string => {
-  if (stats.attempts === 0) {
-    return `<p class="engagement-note">📞 No cold calls logged yet in this range. Log them from the <a href="/cold-call">cold call queue</a>; each also writes a HubSpot call.</p>`;
+  if (stats.attempts === 0 && stats.hubspotAttempts === 0) {
+    return `<p class="engagement-note">📞 No calls logged yet in this range. Disposition them from the <a href="/cold-call">cold call queue</a> (or directly in HubSpot); each writes a HubSpot call engagement.</p>`;
   }
+  const hubspotMetrics = stats.hubspotAttempts === 0
+    ? ''
+    : `
+      <div class="engagement-metric">
+        <div class="val">${formatRate(stats.hubspotConnectRate)}</div>
+        <div class="lbl">HubSpot connect rate</div>
+      </div>
+      <div class="engagement-metric">
+        <div class="val">${String(stats.hubspotAttempts)}</div>
+        <div class="lbl">All calls (HubSpot)</div>
+      </div>`;
   return `
-    <div class="engagement-metrics" aria-label="Cold call performance">
+    <div class="engagement-metrics" aria-label="Call performance">
       <div class="engagement-metric">
         <div class="val">${formatRate(stats.connectRate)}</div>
-        <div class="lbl">Call connect rate</div>
+        <div class="lbl">Cold connect rate</div>
       </div>
       <div class="engagement-metric">
         <div class="val">${String(stats.attempts)}</div>
-        <div class="lbl">Calls logged</div>
+        <div class="lbl">Cold calls logged</div>
       </div>
       <div class="engagement-metric">
         <div class="val">${String(stats.connected)}</div>
-        <div class="lbl">Connected</div>
+        <div class="lbl">Cold connected</div>
       </div>
       <div class="engagement-metric">
         <div class="val">${String(stats.prospects)}</div>
         <div class="lbl">Prospects called</div>
-      </div>
+      </div>${hubspotMetrics}
     </div>
-    <p class="engagement-note">📞 Cold-call dispositions logged via <a href="/cold-call">/cold-call</a>; every attempt also posts a HubSpot call engagement.</p>`;
+    <p class="engagement-note">📞 "Cold" = dispositions logged via <a href="/cold-call">/cold-call</a>. "All calls (HubSpot)" is every outbound call engagement in the account — so it also captures calls dispositioned directly in HubSpot.</p>`;
 };
 
 export const renderEngagementDashboard = (overview: EngagementOverview): string => {
