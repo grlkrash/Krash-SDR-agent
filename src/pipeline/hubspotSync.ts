@@ -126,6 +126,19 @@ const buildCompanyProperties = (
   ss_legitscript_status: enrichment.legitscriptStatus ?? DEFAULT_LEGITSCRIPT_STATUS,
 });
 
+// Company identity fields. When multiple facilities share one domain (a
+// multi-location chain on a single corporate domain, e.g. newseason.com or
+// va.gov), the domain-only dedup key maps them all to one HubSpot company.
+// We freeze these on the first sync so a later location can't clobber the
+// canonical record's name/city/state — the per-location detail still lives on
+// the Lead row and the associated Contact.
+const COMPANY_IDENTITY_KEYS: ReadonlyArray<string> = ['name', 'city', 'state'];
+
+const withoutIdentityProps = (properties: StringRecord): StringRecord =>
+  Object.fromEntries(
+    Object.entries(properties).filter(([key]) => !COMPANY_IDENTITY_KEYS.includes(key)),
+  );
+
 const findCompanyByDomain = async (domain: string): Promise<string | null> => {
   const res = await paced(() =>
     hs.crm.companies.searchApi.doSearch({
@@ -143,7 +156,7 @@ const upsertCompany = async (properties: StringRecord, domain: string): Promise<
   const existingId = await findCompanyByDomain(domain);
   if (existingId !== null) {
     const updated = await paced(() =>
-      hs.crm.companies.basicApi.update(existingId, { properties }),
+      hs.crm.companies.basicApi.update(existingId, { properties: withoutIdentityProps(properties) }),
     );
     return updated.id;
   }
