@@ -25,11 +25,16 @@ import {
   REACTIVATIONS_CALL_BRIEF_LIMIT,
   renderReactivationsToCall,
 } from './brief/reactivationsCall.js';
+import {
+  COLD_CALLS_BRIEF_LIMIT,
+  renderColdCallsToMake,
+} from './brief/coldCalls.js';
 import { buildRenewalCallRows, countOpenRenewalCalls } from './renewalCallFlag.js';
 import {
   buildReactivationCallRows,
   countOpenReactivationCalls,
 } from './reactivationCallFlag.js';
+import { buildColdCallRows, countOpenColdCalls } from './coldCallFlag.js';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -82,6 +87,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     openManualVmCount,
     openRenewalCallCount,
     openReactivationCallCount,
+    openColdCallCount,
   ] = await Promise.all([
     prisma.score.findMany({
       where: { scoredAt: { gte: cutoff } },
@@ -114,6 +120,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     countOpenManualVm(),
     countOpenRenewalCalls(),
     countOpenReactivationCalls(),
+    countOpenColdCalls(),
   ]);
 
   const latestScores = dedupeLatestScores(scoreRows);
@@ -152,6 +159,7 @@ export const sendDailyBrief = async (): Promise<void> => {
   const reactivationCallRows = await buildReactivationCallRows({
     limit: REACTIVATIONS_CALL_BRIEF_LIMIT,
   });
+  const coldCallRows = await buildColdCallRows({ limit: COLD_CALLS_BRIEF_LIMIT });
 
   const body = [
     `# 📊 Pipeline brief — ${date}`,
@@ -169,6 +177,8 @@ export const sendDailyBrief = async (): Promise<void> => {
     renderRenewalsToCall(renewalCallRows, publicUrl, openRenewalCallCount),
     '',
     renderReactivationsToCall(reactivationCallRows, openReactivationCallCount),
+    '',
+    renderColdCallsToMake(coldCallRows, openColdCallCount),
     '',
     renderManualVoicemailRequired(manualVoicemailRows, publicUrl, openManualVmCount),
     '',
@@ -201,6 +211,7 @@ export const sendDailyBrief = async (): Promise<void> => {
         openManualVmCount,
         openRenewalCallCount,
         openReactivationCallCount,
+        openColdCallCount,
         pendingCount,
         sentCount,
         repliesCount,

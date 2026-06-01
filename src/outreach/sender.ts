@@ -27,6 +27,7 @@ import { isTcpaCallingHoursOpen, isVm1SendWindowOpen } from '../shared/voicemail
 import { findSmokeTokens, isSmokeTestRecipient } from './smokeTokenGuard.js';
 import { flagRenewalForCall } from './renewalCallFlag.js';
 import { flagReactivationForCall } from './reactivationCallFlag.js';
+import { flagColdForCall } from './coldCallFlag.js';
 import { appendPostSalePhoneFooter } from '../shared/phoneConsentFooter.js';
 
 const POST_SALE_EMAIL_KINDS = new Set(['renewal', 'reactivation']);
@@ -435,5 +436,11 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
   // instead of an AI voicemail drop (no-op when there is no phone on file).
   if (draft.kind === 'reactivation') {
     await flagReactivationForCall(draftId);
+  }
+
+  // Interleave a human call touch into the cold sequence — pairs the cold email
+  // with a phone touch (no-op when there is no phone on file).
+  if (draft.kind === 'cold') {
+    await flagColdForCall(draftId);
   }
 };
