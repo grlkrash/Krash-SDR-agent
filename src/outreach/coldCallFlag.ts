@@ -21,6 +21,7 @@ import {
   coldTouchDueAt,
   isWithinColdCallWindow,
 } from '../shared/coldCallTouches.js';
+import { isSmokeTestLeadRecord } from '../shared/smokeTestLead.js';
 import { callHint, formatPhoneForDisplay } from './brief/shared.js';
 
 const MS_PER_DAY = 86_400_000;
@@ -359,9 +360,16 @@ export const buildColdCallRows = async (opts?: {
   const candidates: Candidate[] = [];
   const seenLeadIds = new Set<string>();
   for (const d of drafts) {
+    const lead = d.lead;
+    // Smoke-test lanes are operator inbox validation — never show in call queues.
+    if (isSmokeTestLeadRecord(lead)) {
+      if (flagged.has(d.id) && !retired.has(d.id)) {
+        await completeColdCall(d.id, 'smoke-test-retired');
+      }
+      continue;
+    }
     if (!flagged.has(d.id) || retired.has(d.id) || d.sentAt === null) continue;
     if (!isWithinColdCallWindow(d.sentAt, now)) continue;
-    const lead = d.lead;
     if (lead.phoneE164 === null) continue;
     if (seenLeadIds.has(lead.id)) continue;
     if (bookedLeadIds.has(lead.id)) continue;
@@ -463,6 +471,12 @@ export const runColdCallFollowups = async (): Promise<void> => {
   let retiredCount = 0;
 
   for (const draft of drafts) {
+    if (isSmokeTestLeadRecord(draft.lead)) {
+      if (flagged.has(draft.id) && !retired.has(draft.id)) {
+        await completeColdCall(draft.id, 'smoke-test-retired');
+      }
+      continue;
+    }
     if (!flagged.has(draft.id) || retired.has(draft.id) || draft.sentAt === null) continue;
 
     // Lead re-engaged or booked → retire the sequence and close open tasks.

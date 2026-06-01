@@ -4,6 +4,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
+import { loadSmokeTestLeadIds } from '../shared/smokeTestLead.js';
 
 const SENT_STATUSES = ['sent', 'auto-sent'] as const;
 const EXCLUDED_KINDS = ['voicemail', 'voicemail-2'] as const;
@@ -375,7 +376,7 @@ const loadHubspotCalls = async (): Promise<HubspotCallEvent[]> => {
 };
 
 const loadEngagementData = async (): Promise<EngagementData> => {
-  const [drafts, replyEvents, pixelOpenedDraftIds, booked, coldCallTouches, hubspotCalls] =
+  const [allDrafts, replyEvents, pixelOpenedDraftIds, booked, coldCallTouches, hubspotCalls, smokeLeadIds] =
     await Promise.all([
       loadSentDrafts(),
       loadReplyEvents(),
@@ -383,16 +384,34 @@ const loadEngagementData = async (): Promise<EngagementData> => {
       loadBookedEvents(),
       loadColdCallTouches(),
       loadHubspotCalls(),
+      loadSmokeTestLeadIds(prisma),
     ]);
-  const repliedDraftIds = new Set(replyEvents.map((e) => e.matchedDraftId));
+
+  const smokeDraftIds = new Set(
+    allDrafts.filter((d) => smokeLeadIds.has(d.leadId)).map((d) => d.id),
+  );
+  const drafts = allDrafts.filter((d) => !smokeLeadIds.has(d.leadId));
+  const filteredReplies = replyEvents.filter((e) =>
+    !(e.leadId !== null && smokeLeadIds.has(e.leadId))
+    && !smokeDraftIds.has(e.matchedDraftId));
+  const filteredTouches = coldCallTouches.filter((t) =>
+    t.leadId === null || !smokeLeadIds.has(t.leadId));
+  const bookedDraftIds = new Set(
+    [...booked.bookedDraftIds].filter((id) => !smokeDraftIds.has(id)),
+  );
+  const bookedLeadIds = new Set(
+    [...booked.bookedLeadIds].filter((id) => !smokeLeadIds.has(id)),
+  );
+
+  const repliedDraftIds = new Set(filteredReplies.map((e) => e.matchedDraftId));
   return {
     drafts,
-    replyEvents,
+    replyEvents: filteredReplies,
     repliedDraftIds,
     pixelOpenedDraftIds,
-    bookedDraftIds: booked.bookedDraftIds,
-    bookedLeadIds: booked.bookedLeadIds,
-    coldCallTouches,
+    bookedDraftIds,
+    bookedLeadIds,
+    coldCallTouches: filteredTouches,
     hubspotCalls,
   };
 };

@@ -13,6 +13,7 @@ import {
   renewalCallWindowEnd,
   touchDueAt,
 } from '../shared/renewalCallTouches.js';
+import { isSmokeTestLeadRecord } from '../shared/smokeTestLead.js';
 import { callHint, formatPhoneForDisplay } from './brief/shared.js';
 
 const LOOKBACK_DAYS = 45;
@@ -183,10 +184,16 @@ export const buildRenewalCallRows = async (opts?: {
   const rows: RenewalCallRow[] = [];
   const seenLeadIds = new Set<string>();
   for (const d of drafts) {
+    const lead = d.lead;
+    if (isSmokeTestLeadRecord(lead)) {
+      if (flagged.has(d.id) && !completed.has(d.id)) {
+        await completeRenewalCall(d.id, 'smoke-test-retired');
+      }
+      continue;
+    }
     if (!flagged.has(d.id) || completed.has(d.id)) continue;
     if (d.sentAt === null) continue;
     if (!isWithinRenewalCallWindow(d.sentAt, now)) continue;
-    const lead = d.lead;
     if (lead.phoneE164 === null) continue;
     if (seenLeadIds.has(lead.id)) continue;
     seenLeadIds.add(lead.id);
@@ -317,6 +324,12 @@ export const runRenewalCallFollowups = async (): Promise<void> => {
   let expired = 0;
 
   for (const draft of drafts) {
+    if (isSmokeTestLeadRecord(draft.lead)) {
+      if (flagged.has(draft.id) && !completed.has(draft.id)) {
+        await completeRenewalCall(draft.id, 'smoke-test-retired');
+      }
+      continue;
+    }
     if (!flagged.has(draft.id) || completed.has(draft.id)) continue;
     if (draft.sentAt === null) continue;
 

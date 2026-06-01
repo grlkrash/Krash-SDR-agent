@@ -9,7 +9,8 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { hs, hsRetry } from '../shared/hubspot.js';
-import { createHubspotTask } from '../shared/hubspotTask.js';
+import { completeHubspotTask, createHubspotTask } from '../shared/hubspotTask.js';
+import { isSmokeTestLeadRecord } from '../shared/smokeTestLead.js';
 import { callHint, formatPhoneForDisplay } from './brief/shared.js';
 
 const MS_PER_DAY = 86_400_000;
@@ -177,8 +178,15 @@ export const buildReactivationCallRows = async (opts?: {
   const candidates: Candidate[] = [];
   const seenLeadIds = new Set<string>();
   for (const d of drafts) {
-    if (!flaggedTaskByDraft.has(d.id) || d.sentAt === null) continue;
     const lead = d.lead;
+    if (isSmokeTestLeadRecord(lead)) {
+      const taskId = flaggedTaskByDraft.get(d.id) ?? null;
+      if (taskId !== null) {
+        await completeHubspotTask({ taskId, draftId: d.id });
+      }
+      continue;
+    }
+    if (!flaggedTaskByDraft.has(d.id) || d.sentAt === null) continue;
     if (lead.phoneE164 === null) continue;
     if (seenLeadIds.has(lead.id)) continue;
     const sentMs = d.sentAt.getTime();
