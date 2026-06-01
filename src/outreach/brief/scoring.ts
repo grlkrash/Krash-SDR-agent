@@ -15,7 +15,7 @@ export const renderHotLeads = (
   deals: Map<string, EnrichedDeal>,
 ): string => {
   const header = '## 🔥 Top 5 hot leads (sorted by score × commission)';
-  if (rows.length === 0) return `${header}\n\n_No scored deals in the last 24h._`;
+  if (rows.length === 0) return `${header}\n\n_No hot leads in the last 24h._`;
   const items = rows.map((s, i) => {
     const enriched = deals.get(s.hubspotDealId);
     const dealName = enriched?.dealName ?? '(unnamed deal)';

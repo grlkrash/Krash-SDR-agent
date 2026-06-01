@@ -110,7 +110,12 @@ export const sendDailyBrief = async (): Promise<void> => {
   const hotByValue = [...latestScores].sort(
     (a, b) => b.score * b.expectedCommission - a.score * a.expectedCommission,
   );
-  const hotTop = hotByValue.slice(0, HOT_LEADS_LIMIT);
+  // "Hot" is sorted by score × commission, so a $0 weighted lead is not hot —
+  // exclude it from the Top 5. The unfiltered hotByValue still feeds the call
+  // list below, which prioritizes by score rather than weighted value.
+  const hotTop = hotByValue
+    .filter((s) => s.score * s.expectedCommission > 0)
+    .slice(0, HOT_LEADS_LIMIT);
 
   const atRiskCandidates = latestScores
     .map((s) => ({ score: s, stalledDays: parseStalledDays(s.reasons) }))
@@ -158,9 +163,10 @@ export const sendDailyBrief = async (): Promise<void> => {
   ].join('\n');
 
   const baseSubject = `📊 Pipeline brief — ${date}`;
+  const replyNoun = replyRows.length === 1 ? 'reply' : 'replies';
   const subject = replyRows.length === 0
     ? baseSubject
-    : `📬 ${replyRows.length} new replies | ${baseSubject}`;
+    : `📬 ${replyRows.length} new ${replyNoun} | ${baseSubject}`;
 
   await sendEmail({ to: recipient, subject, body, bodyFormat: 'markdown' });
 
