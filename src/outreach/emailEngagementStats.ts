@@ -42,12 +42,23 @@ export type BucketStats = {
   bookRate: number | null;
 };
 
+// Cold-call disposition stats from the cold.call-touch audit (logged via the
+// /cold-call page; each row also writes a HubSpot call engagement).
+export type CallStats = {
+  attempts: number;
+  connected: number;
+  noAnswer: number;
+  prospects: number;
+  connectRate: number | null;
+};
+
 export type EngagementOverview = {
   totals: { sent: number; opened: number; replied: number; booked: number };
   openRate: number | null;
   replyRate: number | null;
   bookRate: number | null;
   byBucket: BucketStats[];
+  callStats: CallStats;
   computedAt: string;
   openDataNote: string;
   range: EngagementRange;
@@ -212,6 +223,13 @@ type EngagementData = {
   // booked at all (a booking with no sourcing draft still warms the lead).
   bookedDraftIds: Set<string>;
   bookedLeadIds: Set<string>;
+  coldCallTouches: ColdCallTouchEvent[];
+};
+
+type ColdCallTouchEvent = {
+  outcome: 'connected' | 'no-answer' | 'other';
+  leadId: string | null;
+  at: Date;
 };
 
 let cachedData: { payload: EngagementData; expiresAt: number } | null = null;
@@ -305,12 +323,34 @@ const loadBookedEvents = async (): Promise<{
   return { bookedDraftIds, bookedLeadIds };
 };
 
+const ColdCallTouchMetaSchema = z.object({
+  leadId: z.string().optional(),
+  outcome: z.string().optional(),
+});
+
+const loadColdCallTouches = async (): Promise<ColdCallTouchEvent[]> => {
+  const rows = await prisma.auditLog.findMany({
+    where: { action: 'cold.call-touch' },
+    select: { meta: true, createdAt: true },
+  });
+  const events: ColdCallTouchEvent[] = [];
+  for (const row of rows) {
+    const parsed = ColdCallTouchMetaSchema.safeParse(row.meta);
+    if (!parsed.success) continue;
+    const raw = parsed.data.outcome;
+    const outcome = raw === 'connected' ? 'connected' : raw === 'no-answer' ? 'no-answer' : 'other';
+    events.push({ outcome, leadId: parsed.data.leadId ?? null, at: row.createdAt });
+  }
+  return events;
+};
+
 const loadEngagementData = async (): Promise<EngagementData> => {
-  const [drafts, replyEvents, pixelOpenedDraftIds, booked] = await Promise.all([
+  const [drafts, replyEvents, pixelOpenedDraftIds, booked, coldCallTouches] = await Promise.all([
     loadSentDrafts(),
     loadReplyEvents(),
     loadPixelOpenedDraftIds(),
     loadBookedEvents(),
+    loadColdCallTouches(),
   ]);
   const repliedDraftIds = new Set(replyEvents.map((e) => e.matchedDraftId));
   return {
@@ -320,6 +360,7 @@ const loadEngagementData = async (): Promise<EngagementData> => {
     pixelOpenedDraftIds,
     bookedDraftIds: booked.bookedDraftIds,
     bookedLeadIds: booked.bookedLeadIds,
+    coldCallTouches,
   };
 };
 
@@ -457,6 +498,29 @@ const computeTemperature = (
   };
 };
 
+const buildCallStats = (
+  touches: ColdCallTouchEvent[],
+  range: EngagementRange,
+): CallStats => {
+  const scoped = touches.filter((t) => draftSentWithinRange(t.at, range));
+  let connected = 0;
+  let noAnswer = 0;
+  const prospects = new Set<string>();
+  for (const t of scoped) {
+    if (t.outcome === 'connected') connected += 1;
+    else if (t.outcome === 'no-answer') noAnswer += 1;
+    if (t.leadId !== null) prospects.add(t.leadId);
+  }
+  const attempts = scoped.length;
+  return {
+    attempts,
+    connected,
+    noAnswer,
+    prospects: prospects.size,
+    connectRate: ratePct(connected, attempts),
+  };
+};
+
 const buildOverview = (
   data: EngagementData,
   range: EngagementRange,
@@ -478,6 +542,7 @@ const buildOverview = (
     replyRate: ratePct(replied, sent),
     bookRate: ratePct(booked, sent),
     byBucket: buildBucketStats(scoped, data.repliedDraftIds, data.pixelOpenedDraftIds, data.bookedDraftIds),
+    callStats: buildCallStats(data.coldCallTouches, range),
     computedAt: new Date().toISOString(),
     openDataNote: OPEN_DATA_NOTE,
     range,

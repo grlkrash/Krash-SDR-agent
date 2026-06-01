@@ -1,6 +1,7 @@
 // Server-rendered engagement dashboard fragments for /queue.
 
 import type {
+  CallStats,
   EngagementOverview,
   EngagementRange,
   LeadEngagementSummary,
@@ -90,6 +91,32 @@ export const renderEngagementRangeFilters = (opts: {
   return `<div class="engagement-range-filters" role="toolbar" aria-label="Engagement time range">${items}</div>`;
 };
 
+const renderCallPerformance = (stats: CallStats): string => {
+  if (stats.attempts === 0) {
+    return `<p class="engagement-note">📞 No cold calls logged yet in this range. Log them from the <a href="/cold-call">cold call queue</a>; each also writes a HubSpot call.</p>`;
+  }
+  return `
+    <div class="engagement-metrics" aria-label="Cold call performance">
+      <div class="engagement-metric">
+        <div class="val">${formatRate(stats.connectRate)}</div>
+        <div class="lbl">Call connect rate</div>
+      </div>
+      <div class="engagement-metric">
+        <div class="val">${String(stats.attempts)}</div>
+        <div class="lbl">Calls logged</div>
+      </div>
+      <div class="engagement-metric">
+        <div class="val">${String(stats.connected)}</div>
+        <div class="lbl">Connected</div>
+      </div>
+      <div class="engagement-metric">
+        <div class="val">${String(stats.prospects)}</div>
+        <div class="lbl">Prospects called</div>
+      </div>
+    </div>
+    <p class="engagement-note">📞 Cold-call dispositions logged via <a href="/cold-call">/cold-call</a>; every attempt also posts a HubSpot call engagement.</p>`;
+};
+
 export const renderEngagementDashboard = (overview: EngagementOverview): string => {
   const bucketRows = overview.byBucket.map((row) => `
     <tr>
@@ -131,6 +158,7 @@ export const renderEngagementDashboard = (overview: EngagementOverview): string 
       </div>
     </div>
     <p class="engagement-note">${escapeHtml(overview.openDataNote)}</p>
+    ${renderCallPerformance(overview.callStats)}
     <details class="engagement-details">
       <summary>Break down by email type</summary>
       ${bucketTable}
