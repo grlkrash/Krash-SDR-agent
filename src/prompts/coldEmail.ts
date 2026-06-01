@@ -19,6 +19,18 @@ WHAT SOBRIETY SELECT IS (required SS identity paragraph — 2–3 sentences in y
 - Partnership: enhanced placement, lead capture, complete facility profile families trust
 This paragraph must appear AFTER market pain and BEFORE the CTA. The prospect should finish reading knowing who SS is and why it fits them.
 
+FREE-LISTING ENTRY OFFER (our highest-booking cold angle — lead with an asset they already own):
+Sobriety Select pre-builds a basic directory profile for every center from public information. The strongest cold hook is offering to get that free profile claimed, verified, and live — a low-commitment "yes" that puts them on the map where families search by region and insurance. The free profile is the REASON to talk; the CTA stays the quick call (booking link). It is genuinely free, with no card and no obligation. Paid tiers/upgrades are a conversation for the call, NEVER this email.
+Tier usage:
+- claimed/solo: LEAD with the free profile. Frame it as a no-cost way to make sure their {city} listing is accurate and discoverable. Primary reason-to-talk.
+- select: open with the local census observation, then offer the free profile claim as the easy first step before the call.
+- premium / big spenders: lead with the paid-search pressure angle; mention the free profile as proof we already have them on the map, but keep the focus on the call.
+
+FREE-LISTING GUARDRAILS (a claimed listing must stay honest — do not overpromise, do not catastrophize):
+- NEVER promise outcomes from a free listing. Banned: "fill your beds", "guaranteed calls/admissions/inquiries", "flood/surge of inquiries", "Nx more", "double/triple", or any certainty that they "will get more families/calls". A listing improves discoverability; it does not guarantee volume. Use grounded language ("so families searching {city} can find you").
+- NEVER overstate their current lack of visibility. Banned: calling a center "invisible", saying "no one / families can't find you", "you don't exist online", "zero visibility", "impossible to find". Most centers already rank for their own name. Describe gaps precisely and locally ("families searching {city} by insurance may not see you on map-forward directories yet"), never as total absence.
+- Keep the word "free" OUT of the subject line (filters flag it); it belongs in the body. Never imply the free listing is scarce or time-limited ("claim before it's gone").
+
 ABSOLUTE SS-PRICING RULE: Never mention Sobriety Select pricing, our fees, dollar amounts, package costs, or "starts at" framings. Never use tier product names (Claimed/Select/Premium). Industry YoY percentage stats about paid search (124%, 62%) are ALLOWED — that is third-party market data, not our pricing.
 
 TIER ANGLES (internal context only — never name the tier in the email):
@@ -171,6 +183,19 @@ const buildSubjectHint = (lead: Lead, enrichment: Enrichment): string => {
   return `SUBJECT hint: try "${city.toLowerCase()} intake gap" or "${city.toLowerCase()} census pipeline". Never "Increase Visibility" or brand names.`;
 };
 
+const buildFreeListingHint = (enrichment: Enrichment): string => {
+  const tier = enrichment.expectedProduct;
+  const bigSpender = isBigSpender(enrichment.signals);
+
+  if (tier === 'premium' || bigSpender) {
+    return 'FREE-LISTING hint: lead with paid-search pressure; mention we already have a basic profile they can claim as proof we have them on the map, but keep the focus on the call. Do NOT promise listing outcomes or call them invisible.';
+  }
+  if (tier === 'claimed') {
+    return 'FREE-LISTING hint: LEAD with claiming their free Sobriety Select profile — a no-cost way to make sure their city listing is accurate and discoverable. Honest framing only: no guaranteed results, never say families "can\'t find" them, never imply scarcity.';
+  }
+  return 'FREE-LISTING hint: open with the local census observation, then offer the free profile claim as the easy first step before the call. No outcome guarantees; describe visibility gaps precisely, never as total absence.';
+};
+
 const buildMarketPainHint = (enrichment: Enrichment): string => {
   const tier = enrichment.expectedProduct;
   const bigSpender = isBigSpender(enrichment.signals);
@@ -214,8 +239,9 @@ export const buildColdEmailUser = (
     `\nINTERNAL TIER (for tone/angle only — NEVER mention tier name, price, or any dollar amount in the email): ${enrichment.expectedProduct}`,
     `\nWrite the email per the tier's angle. If any intelligence signal is high-leverage (missing from competing directories, active hiring, or big spender tech stack), prefer it as your lead observation.`,
     `\n${buildMarketPainHint(enrichment)}`,
+    `\n${buildFreeListingHint(enrichment)}`,
     `\n${buildSubjectHint(lead, enrichment)}`,
-    '\nInclude the SS IDENTITY paragraph (who Sobriety Select is, map-forward discovery, rich profiles) before the CTA. Target 130–165 words total.',
+    '\nInclude the SS IDENTITY paragraph (who Sobriety Select is, map-forward discovery, rich profiles) before the CTA. Offer the free profile claim as the reason-to-talk, but keep the booking-link call as the actual ask. Target 130–165 words total.',
   ].join('');
 
   const bookingLink = getBookingLink();

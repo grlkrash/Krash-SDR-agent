@@ -9,7 +9,11 @@ export const COLD_BODY_TARGET_MAX = 165;
 export const SUBJECT_MAX_WORDS = 6;
 export const SUBJECT_MAX_CHARS = 50;
 
-export type ColdEmailQualityIssue = 'too-short' | 'missing-ss-identity';
+export type ColdEmailQualityIssue =
+  | 'too-short'
+  | 'missing-ss-identity'
+  | 'overpromise'
+  | 'oversells-invisibility';
 
 export type SubjectQualityIssue =
   | 'too-many-words'
@@ -68,6 +72,17 @@ const SUBJECT_SPAM_RX = /!{2,}|^[A-Z\s!]{8,}$/;
 const countSsIdentityMarkers = (body: string): number =>
   SS_IDENTITY_MARKERS.filter((rx) => rx.test(body)).length;
 
+// Free-listing guardrails. Block hard outcome promises and catastrophized
+// claims about the prospect's current visibility — the two failure modes Sonia
+// flagged when approving the free-listing angle. Patterns are intentionally
+// narrow to avoid tripping on grounded local framing ("families searching
+// {city} reach competitors", "almost no directory presence").
+const OVERPROMISE_RX =
+  /\b(?:guarantee[ds]?|fill (?:your |every )?beds?|flood of|surge of|\d+\s*x\b|double (?:your|the)\b|triple (?:your|the)\b|guaranteed (?:leads|calls|admissions|inquiries)|we['’]ll (?:fill|get you|bring you)|you['’]ll (?:fill|get|see) (?:more )?(?:beds|admissions|families|inquiries|calls))\b/i;
+
+const OVERSELL_INVISIBILITY_RX =
+  /\b(?:invisible|no one can find you|nobody can find you|families can['’]?t find you|can['’]?t be found|don['’]?t exist online|do not exist online|zero visibility|completely (?:missing|invisible)|impossible to find|off the map)\b/i;
+
 const facilityTokens = (name: string): string[] =>
   name
     .toLowerCase()
@@ -118,6 +133,12 @@ export const assessColdEmailQuality = (body: string): ColdEmailQualityResult => 
   }
   if (countSsIdentityMarkers(body) < 2) {
     issues.push('missing-ss-identity');
+  }
+  if (OVERPROMISE_RX.test(body)) {
+    issues.push('overpromise');
+  }
+  if (OVERSELL_INVISIBILITY_RX.test(body)) {
+    issues.push('oversells-invisibility');
   }
 
   return { ok: issues.length === 0, issues, wordCount };
@@ -172,6 +193,16 @@ export const buildQualityRetryFeedback = (quality: ColdEmailQualityResult): stri
   if (quality.issues.includes('missing-ss-identity')) {
     parts.push(
       'Missing Sobriety Select identity — include at least 2 sentences explaining what SS is (trusted map-forward directory, families search by region and insurance, rich profiles with services/insurance/reviews, works alongside existing marketing without paid-search bidding wars).',
+    );
+  }
+  if (quality.issues.includes('overpromise')) {
+    parts.push(
+      'Remove the outcome promise. A free listing improves discoverability — it does NOT guarantee volume. Cut "guarantee", "fill your beds", "flood/surge of inquiries", "Nx/double/triple", and any "you\'ll get more calls/families" certainty. Use grounded framing like "so families searching {city} can find you".',
+    );
+  }
+  if (quality.issues.includes('oversells-invisibility')) {
+    parts.push(
+      'Do not catastrophize their visibility. Most centers already rank for their own name. Cut "invisible", "no one/families can\'t find you", "don\'t exist online", "zero visibility". Describe the gap precisely and locally ("families searching {city} by insurance may not see you on map-forward directories yet").',
     );
   }
 

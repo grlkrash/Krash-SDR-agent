@@ -40,6 +40,32 @@ describe('coldEmailQuality — body', () => {
     expect(result.issues).toContain('too-short');
   });
 
+  it('passes gold-standard body without tripping the free-listing guardrails', () => {
+    const result = assessColdEmailQuality(GOLD_BODY);
+    expect(result.issues).not.toContain('overpromise');
+    expect(result.issues).not.toContain('oversells-invisibility');
+  });
+
+  it('flags an outcome overpromise', () => {
+    const body = GOLD_BODY.replace(
+      'so inquiries are better aligned',
+      'and we guarantee we will fill your beds with a flood of inquiries',
+    );
+    const result = assessColdEmailQuality(body);
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain('overpromise');
+  });
+
+  it('flags catastrophized invisibility', () => {
+    const body = GOLD_BODY.replace(
+      'families searching Hardee County are mostly reaching other centers first',
+      'families can\'t find you and your center is invisible online',
+    );
+    const result = assessColdEmailQuality(body);
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain('oversells-invisibility');
+  });
+
   it('flags missing SS identity', () => {
     const longButGeneric = [
       'Robert, Tri County Human Services serves Wauchula and Hardee County inquiries often route to other operators before they reach your intake line.',
