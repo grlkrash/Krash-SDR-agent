@@ -48,6 +48,8 @@ export const CRON_JOBS: CronJobDef[] = [
   },
   { name: 'renewalWarnings', kind: 'daily', etHour: 10, etMinute: 0, modulePath: './renewalWarnings.js', enabled: true },
   { name: 'renewalCallFollowups', kind: 'daily', etHour: 8, etMinute: 0, modulePath: './renewalCallFollowups.js', enabled: true },
+  // Advance the 3-touch cold-call cadence (BD 2/5/9) before the brief is built.
+  { name: 'coldCallFollowups', kind: 'daily', etHour: 8, etMinute: 10, modulePath: './coldCallFollowups.js', enabled: true },
   // Voicemail paused — sent reactivations are flagged for a manual call
   // (flagReactivationForCall) instead of dropping an AI voicemail. Re-enable
   // (enabled: true) to resume consent-gated post-sale vm-1 drops.
