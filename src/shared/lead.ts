@@ -8,6 +8,46 @@ const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' 
 const prisma = new PrismaClient({ adapter });
 const SUFFIX_RE = /\s*(?:llc|inc|corp|center|recovery|treatment|services)\s*$/i;
 
+// USPS-style street-token canonicalization so the same physical address always
+// hashes to one value regardless of scrape formatting ("St" vs "Street",
+// "Ste 100" vs "#100"). Without this, formatting variance across sources
+// (gmaps/samhsa/psychtoday) mints duplicate Lead rows that survive the
+// (nameNormalized, addressHash) unique key.
+const STREET_TOKEN_MAP: Readonly<Record<string, string>> = {
+  street: 'st', st: 'st',
+  avenue: 'ave', ave: 'ave', av: 'ave',
+  boulevard: 'blvd', blvd: 'blvd',
+  road: 'rd', rd: 'rd',
+  drive: 'dr', dr: 'dr',
+  lane: 'ln', ln: 'ln',
+  court: 'ct', ct: 'ct',
+  place: 'pl', pl: 'pl',
+  circle: 'cir', cir: 'cir',
+  highway: 'hwy', hwy: 'hwy',
+  parkway: 'pkwy', pkwy: 'pkwy',
+  terrace: 'ter', ter: 'ter',
+  trail: 'trl', trl: 'trl',
+  suite: 'ste', ste: 'ste', unit: 'ste', apt: 'ste', apartment: 'ste',
+  building: 'bldg', bldg: 'bldg',
+  north: 'n', south: 's', east: 'e', west: 'w',
+  northeast: 'ne', northwest: 'nw', southeast: 'se', southwest: 'sw',
+};
+
+export const normalizeStreet = (street: string | null | undefined): string => {
+  if (street === null || street === undefined || street.trim() === '') return '';
+  return street
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+    .map((t) => STREET_TOKEN_MAP[t] ?? t)
+    .join(' ');
+};
+
+// First-5 of the zip so "33601" and "33601-1234" collapse together.
+const normalizeZip = (zip: string | null | undefined): string =>
+  (zip ?? '').replace(/[^0-9]/g, '').slice(0, 5);
+
 export const LeadInput = z.object({
   source: z.enum(['samhsa', 'gmaps', 'psychtoday']),
   name: z.string(),
@@ -31,7 +71,7 @@ export const normalizeName = (name: string): string => {
 
 export const addressHash = (street: string | null, zip: string | null): string =>
   createHash('sha256')
-    .update(`${(street ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')}|${zip ?? ''}`)
+    .update(`${normalizeStreet(street)}|${normalizeZip(zip)}`)
     .digest('hex');
 
 export const toE164 = (raw: string | null | undefined): string | null => {
