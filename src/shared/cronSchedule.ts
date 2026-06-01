@@ -32,7 +32,9 @@ export const CRON_JOBS: CronJobDef[] = [
   },
   { name: 'draftColdBatch', kind: 'daily', etHour: 6, etMinute: 30, modulePath: './draftColdBatch.js', enabled: true },
   { name: 'draftFollowups', kind: 'daily', etHour: 7, etMinute: 0, modulePath: './draftFollowups.js', enabled: true },
-  { name: 'runSecondCalls', kind: 'daily', etHour: 7, etMinute: 15, modulePath: './runSecondCalls.js', enabled: true },
+  // Voicemail paused — reactivation drops route to the call lane instead of an
+  // AI voicemail. Re-enable (enabled: true) to resume vm-2 second calls.
+  { name: 'runSecondCalls', kind: 'daily', etHour: 7, etMinute: 15, modulePath: './runSecondCalls.js', enabled: false },
   { name: 'runSequences', kind: 'daily', etHour: 7, etMinute: 30, modulePath: './runSequences.js', enabled: true },
   { name: 'draftUpsellBatch', kind: 'daily', etHour: 8, etMinute: 0, modulePath: './draftUpsellBatch.js', enabled: true },
   { name: 'quarterlyCheckins', kind: 'daily', etHour: 9, etMinute: 0, modulePath: './quarterlyCheckins.js', enabled: true },
@@ -46,8 +48,10 @@ export const CRON_JOBS: CronJobDef[] = [
   },
   { name: 'renewalWarnings', kind: 'daily', etHour: 10, etMinute: 0, modulePath: './renewalWarnings.js', enabled: true },
   { name: 'renewalCallFollowups', kind: 'daily', etHour: 8, etMinute: 0, modulePath: './renewalCallFollowups.js', enabled: true },
-  // Consent-gated post-sale vm-1 only (renewal/reactivation + PEWC). Cold vm disabled.
-  { name: 'dropVoicemails', kind: 'daily', etHour: 14, etMinute: 0, modulePath: './dropVoicemails.js', enabled: true },
+  // Voicemail paused — sent reactivations are flagged for a manual call
+  // (flagReactivationForCall) instead of dropping an AI voicemail. Re-enable
+  // (enabled: true) to resume consent-gated post-sale vm-1 drops.
+  { name: 'dropVoicemails', kind: 'daily', etHour: 14, etMinute: 0, modulePath: './dropVoicemails.js', enabled: false },
   // Every Railway cron tick (*/5 UTC): isDueNow uses minute % 5 < 5; shouldSkip
   // enforces ≥4.5 min between runs — ~5 min reply detection cadence.
   { name: 'checkReplies', kind: 'interval', intervalMinutes: 5, modulePath: './checkReplies.js', enabled: true },

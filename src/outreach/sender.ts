@@ -137,6 +137,16 @@ const dropVoicemailViaTwilio = async (
   draft: Draft,
   lead: LeadWithEnrichment,
 ): Promise<void> => {
+  // Voicemail globally paused. Reactivations now route to the manual call lane
+  // (flagReactivationForCall) instead of an AI drop, so no approved voicemail
+  // draft should dial. Guarding here too is belt-and-suspenders against a
+  // manually-seeded vm draft. Set VM_GLOBALLY_ENABLED=true (and flip
+  // dropVoicemails / runSecondCalls in cronSchedule) to resume.
+  if (process.env.VM_GLOBALLY_ENABLED !== 'true') {
+    await audit('sender.voicemail-disabled', draft.id, { leadId: lead.id, kind: draft.kind });
+    return;
+  }
+
   if (process.env.VM_AI_AUTO_SEND !== 'true') {
     await audit('sender.voicemail-auto-send-paused', draft.id, {
       leadId: lead.id,
