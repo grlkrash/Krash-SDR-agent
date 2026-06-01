@@ -21,7 +21,15 @@ import {
   RENEWALS_CALL_BRIEF_LIMIT,
   renderRenewalsToCall,
 } from './brief/renewalsCall.js';
+import {
+  REACTIVATIONS_CALL_BRIEF_LIMIT,
+  renderReactivationsToCall,
+} from './brief/reactivationsCall.js';
 import { buildRenewalCallRows, countOpenRenewalCalls } from './renewalCallFlag.js';
+import {
+  buildReactivationCallRows,
+  countOpenReactivationCalls,
+} from './reactivationCallFlag.js';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -73,6 +81,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     meetingsCount,
     openManualVmCount,
     openRenewalCallCount,
+    openReactivationCallCount,
   ] = await Promise.all([
     prisma.score.findMany({
       where: { scoredAt: { gte: cutoff } },
@@ -104,6 +113,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     countMeetingsBookedSince(cutoff),
     countOpenManualVm(),
     countOpenRenewalCalls(),
+    countOpenReactivationCalls(),
   ]);
 
   const latestScores = dedupeLatestScores(scoreRows);
@@ -139,6 +149,9 @@ export const sendDailyBrief = async (): Promise<void> => {
     limit: MANUAL_VM_BRIEF_LIMIT,
   });
   const renewalCallRows = await buildRenewalCallRows({ limit: RENEWALS_CALL_BRIEF_LIMIT });
+  const reactivationCallRows = await buildReactivationCallRows({
+    limit: REACTIVATIONS_CALL_BRIEF_LIMIT,
+  });
 
   const body = [
     `# 📊 Pipeline brief — ${date}`,
@@ -154,6 +167,8 @@ export const sendDailyBrief = async (): Promise<void> => {
     renderCallList(callList),
     '',
     renderRenewalsToCall(renewalCallRows, publicUrl, openRenewalCallCount),
+    '',
+    renderReactivationsToCall(reactivationCallRows, openReactivationCallCount),
     '',
     renderManualVoicemailRequired(manualVoicemailRows, publicUrl, openManualVmCount),
     '',
@@ -184,6 +199,8 @@ export const sendDailyBrief = async (): Promise<void> => {
         callListCount: callList.length,
         manualVoicemailCount: manualVoicemailRows.length,
         openManualVmCount,
+        openRenewalCallCount,
+        openReactivationCallCount,
         pendingCount,
         sentCount,
         repliesCount,

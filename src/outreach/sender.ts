@@ -26,6 +26,7 @@ import { isSmokeTestLead } from '../shared/smokeTestLead.js';
 import { isTcpaCallingHoursOpen, isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
 import { findSmokeTokens, isSmokeTestRecipient } from './smokeTokenGuard.js';
 import { flagRenewalForCall } from './renewalCallFlag.js';
+import { flagReactivationForCall } from './reactivationCallFlag.js';
 import { appendPostSalePhoneFooter } from '../shared/phoneConsentFooter.js';
 
 const POST_SALE_EMAIL_KINDS = new Set(['renewal', 'reactivation']);
@@ -428,5 +429,11 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
 
   if (draft.kind === 'renewal') {
     await flagRenewalForCall(draftId);
+  }
+
+  // Voicemail is paused, so a sent reactivation is flagged for a manual call
+  // instead of an AI voicemail drop (no-op when there is no phone on file).
+  if (draft.kind === 'reactivation') {
+    await flagReactivationForCall(draftId);
   }
 };
