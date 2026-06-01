@@ -34,7 +34,10 @@ Top 3 from the painPoints JSON. One bullet each, ≤ 12 words.
 Specific, open-ended questions based on context. Not generic ('how's business?'). Examples: 'How many of your beds are private-pay vs Medicaid?' 'Your IOP page has no schema markup — is that intentional or a gap?'
 
 ## 🛑 Known objections to expect
-2-3 likely objections based on the tier they fit. For Select: 'we tried directories before'. For Premium: 'we already spend on Google Ads'. For Claimed: 'is this just SEO bait?'.
+2-3 likely objections based on the tier they fit. For Select: 'we tried directories before'. For Premium: 'we already spend on Google Ads'. For Claimed: 'is this just SEO bait?'. When freeListingOffered is true, ALWAYS include the free-vs-paid objection — 'why pay when the basic profile is free?' — with a one-line grounded rebuttal (the free profile just gets them on the map; the paid tier adds tier-specific reach/lead capture).
+
+## 💎 Free listing → premium pivot
+Only include this section when freeListingOffered is true (they entered through the free-profile offer). Give Sonia exactly two bullets: (1) the easy win — confirm/claim the free basic profile live on the call; (2) the specific incremental value of THIS prospect's expected tier OVER the free listing, grounded in a real signal/pain point above (e.g. Select: priority regional placement + lead capture; Premium: top placement + insurance-match routing + verified reviews). Stay honest: frame the upgrade as more aligned, qualified inquiries — NEVER guaranteed admissions, "fill your beds", or any outcome promise, and never imply the prospect is currently invisible. If freeListingOffered is false, omit this section entirely.
 
 ## 🎯 The angle to lead with
 ONE sentence Sonia uses as her opener. Specific. Drawn from the sharpest data point.
@@ -99,6 +102,7 @@ export const buildPrepBriefUser = (
   hubspotEngagements: PrepBriefEngagement[],
   hubspotDeal: PrepBriefDeal,
   commission: number,
+  freeListingOffered: boolean = false,
 ): string => {
   const tierRaw = hubspotDeal.productType ?? enrichment.expectedProduct ?? null;
   const tier = tierRaw === null || tierRaw === '' ? 'unknown' : tierRaw;
@@ -124,6 +128,7 @@ export const buildPrepBriefUser = (
     tier,
     commission,
     annualPrice,
+    freeListingOffered,
     teamSize: enrichment.teamSizeSignal,
     painPoints: enrichment.painPoints,
     signals: enrichment.signals,
@@ -165,5 +170,8 @@ export const buildPrepBriefUser = (
     'If owner.name is null, omit the "owner ..." clause from the One-line summary rather than fabricating one.',
     'For 📜 Conversation history: render the 3 most recent recentEngagements (or all of them if fewer than 3) in chronological order (oldest first → newest). If recentEngagements is empty, write exactly "No prior contact".',
     'Three sharpest data points MUST prefer signal-based observations from signals.hiring / signals.competingDirectories / signals.techStack when present, before falling back to painPoints.',
+    freeListingOffered
+      ? 'freeListingOffered is true: include the "💎 Free listing → premium pivot" section and the free-vs-paid objection. The prospect was offered the free Sobriety Select profile in cold outreach — confirm/claim it as the easy win, then pivot to the paid tier value. Honest framing only — no outcome guarantees.'
+      : 'freeListingOffered is false: OMIT the "💎 Free listing → premium pivot" section entirely.',
   ].join('\n');
 };

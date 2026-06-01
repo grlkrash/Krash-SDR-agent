@@ -279,6 +279,20 @@ export const generatePrepBriefWithLead = async (
   const tierKey = dealProps.ss_product_type ?? enrichment.expectedProduct ?? '';
   const commission = TIER_COMMISSIONS[tierKey] ?? DEFAULT_COMMISSION;
 
+  // Did this prospect enter through the free-listing cold angle? If a cold email
+  // went out, the prep brief should frame the free→premium pivot and the
+  // free-vs-paid objection.
+  const coldSent = await prisma.draft.findFirst({
+    where: {
+      leadId: lead.id,
+      kind: 'cold',
+      status: { in: ['sent', 'auto-sent'] },
+      sentAt: { not: null },
+    },
+    select: { id: true },
+  });
+  const freeListingOffered = coldSent !== null;
+
   const briefDeal: PrepBriefDeal = {
     dealname: dealProps.dealname ?? null,
     dealstage: dealProps.dealstage ?? null,
@@ -296,6 +310,7 @@ export const generatePrepBriefWithLead = async (
     engagements,
     briefDeal,
     commission,
+    freeListingOffered,
   );
 
   const msg = await claude.messages.create({
@@ -329,6 +344,7 @@ export const generatePrepBriefWithLead = async (
         leadId: lead.id,
         commission,
         tier: tierKey === '' ? null : tierKey,
+        freeListingOffered,
         engagementCount: engagements.length,
         contactCount: contacts.length,
       },
