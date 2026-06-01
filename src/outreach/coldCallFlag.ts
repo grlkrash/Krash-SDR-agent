@@ -13,6 +13,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import { completeHubspotTask, createHubspotTask } from '../shared/hubspotTask.js';
+import { logHubspotOutboundCall } from '../shared/logHubspotCall.js';
 import {
   COLD_CALL_MAX_TOUCHES,
   type ColdCallTouchNumber,
@@ -152,6 +153,28 @@ const loadCreatedTasksByDraft = async (
   return map;
 };
 
+// Touches logged from the /cold-call page (connected / no-answer), per draft.
+// Complements HubSpot task completion: a touch counts as done if it was logged
+// in our UI OR its HubSpot task was closed directly in HubSpot.
+const loadTouchStateByDraft = async (
+  draftIds: string[],
+): Promise<Map<string, Set<number>>> => {
+  const rows = await prisma.auditLog.findMany({
+    where: { action: 'cold.call-touch', entityId: { in: draftIds } },
+    select: { entityId: true, meta: true },
+  });
+  const map = new Map<string, Set<number>>();
+  for (const r of rows) {
+    if (r.entityId === null) continue;
+    const n = parseTouchNumber(r.meta);
+    if (n === null) continue;
+    const set = map.get(r.entityId) ?? new Set<number>();
+    set.add(n);
+    map.set(r.entityId, set);
+  }
+  return map;
+};
+
 // Inbound replies per lead. A reply at/after the cold send means they engaged —
 // switch to the reply lane, not a cold dial.
 const loadRepliedAtByLead = async (leadIds: string[]): Promise<Map<string, Date[]>> => {
@@ -222,6 +245,63 @@ export const completeColdCall = async (draftId: string, reason: string): Promise
   await audit('cold.call-completed', draftId, { reason });
 };
 
+// Log one call attempt from the /cold-call page: records the disposition
+// (connected / no-answer) for system-improvement data, logs a HubSpot outbound
+// call engagement, and closes that touch's HubSpot task. A "connected" outcome
+// retires the whole sequence.
+export const logColdCallTouch = async (opts: {
+  draftId: string;
+  touchNumber: number;
+  outcome: 'connected' | 'no-answer';
+}): Promise<{ touchNumber: number | null; completed: boolean }> => {
+  const draft = await prisma.draft.findUnique({
+    where: { id: opts.draftId },
+    include: { lead: true },
+  });
+  if (draft === null || draft.kind !== COLD_KIND) {
+    return { touchNumber: null, completed: false };
+  }
+
+  // Idempotent: ignore a double-submit for the same touch.
+  const existing = await prisma.auditLog.findFirst({
+    where: {
+      action: 'cold.call-touch',
+      entityId: opts.draftId,
+      meta: { path: ['touchNumber'], equals: opts.touchNumber },
+    },
+  });
+  if (existing !== null) {
+    return { touchNumber: opts.touchNumber, completed: false };
+  }
+
+  const created = await loadCreatedTasksByDraft([opts.draftId]);
+  const task = (created.get(opts.draftId) ?? []).find((t) => t.touchNumber === opts.touchNumber);
+  const taskId = task?.taskId ?? null;
+
+  await audit('cold.call-touch', opts.draftId, {
+    leadId: draft.leadId,
+    touchNumber: opts.touchNumber,
+    outcome: opts.outcome,
+    hubspotTaskId: taskId,
+  });
+
+  await logHubspotOutboundCall({
+    draftId: opts.draftId,
+    companyId: draft.lead.hubspotCompanyId,
+    disposition: opts.outcome === 'connected' ? 'connected' : 'no-answer',
+  });
+
+  if (taskId !== null) {
+    await completeHubspotTask({ taskId, draftId: opts.draftId });
+  }
+
+  if (opts.outcome === 'connected') {
+    await completeColdCall(opts.draftId, 'connected-on-touch');
+    return { touchNumber: opts.touchNumber, completed: true };
+  }
+  return { touchNumber: opts.touchNumber, completed: false };
+};
+
 // --- daily brief -----------------------------------------------------------
 
 export type ColdCallRow = {
@@ -234,6 +314,8 @@ export type ColdCallRow = {
   ownerName: string | null;
   hint: string;
   sentAt: Date;
+  windowEndAt: Date;
+  hubspotCompanyId: string | null;
   touchesDone: number;
   nextTouchNumber: number | null;
 };
@@ -289,12 +371,21 @@ export const buildColdCallRows = async (opts?: {
   }
   if (candidates.length === 0) return [];
 
-  const createdByDraft = await loadCreatedTasksByDraft(candidates.map((c) => c.draft.id));
-  const allTaskIds = [...createdByDraft.values()]
-    .flat()
-    .map((t) => t.taskId)
-    .filter((id): id is string => id !== null);
-  const completedTaskIds = await loadCompletedTaskIds(allTaskIds);
+  const candidateIds = candidates.map((c) => c.draft.id);
+  const [createdByDraft, touchStateByDraft] = await Promise.all([
+    loadCreatedTasksByDraft(candidateIds),
+    loadTouchStateByDraft(candidateIds),
+  ]);
+
+  // Only HubSpot-check tasks for touches not already logged done in our UI.
+  const taskIdsToCheck: string[] = [];
+  for (const [draftId, tasks] of createdByDraft) {
+    const uiDone = touchStateByDraft.get(draftId) ?? new Set<number>();
+    for (const t of tasks) {
+      if (t.taskId !== null && !uiDone.has(t.touchNumber)) taskIdsToCheck.push(t.taskId);
+    }
+  }
+  const completedTaskIds = await loadCompletedTaskIds(taskIdsToCheck);
 
   const rows: ColdCallRow[] = [];
   for (const c of candidates) {
@@ -303,8 +394,12 @@ export const buildColdCallRows = async (opts?: {
     if (d.sentAt === null || lead.phoneE164 === null) continue;
 
     const created = createdByDraft.get(d.id) ?? [];
+    const uiDone = touchStateByDraft.get(d.id) ?? new Set<number>();
+    // A touch is done if logged in our UI OR its HubSpot task was closed.
     const outstanding = created
-      .filter((t) => t.taskId === null || !completedTaskIds.has(t.taskId))
+      .filter((t) =>
+        !uiDone.has(t.touchNumber)
+        && (t.taskId === null || !completedTaskIds.has(t.taskId)))
       .map((t) => t.touchNumber)
       .sort((a, b) => a - b);
     // No open call task right now (cron will create the next touch when due).
@@ -321,6 +416,8 @@ export const buildColdCallRows = async (opts?: {
       ownerName: lead.enrichment?.ownerName ?? null,
       hint: callHint(lead.state),
       sentAt: d.sentAt,
+      windowEndAt: coldCallWindowEnd(d.sentAt),
+      hubspotCompanyId: lead.hubspotCompanyId,
       touchesDone,
       nextTouchNumber: outstanding[0] ?? null,
     });

@@ -5,16 +5,17 @@ export const COLD_CALLS_BRIEF_LIMIT = 8;
 
 export const renderColdCallsToMake = (
   rows: ColdCallRow[],
+  publicUrl: string,
   openCount: number,
 ): string => {
+  const queueUrl = `${publicUrl}/cold-call`;
   const header = '## 📞 Cold calls to make (3-touch cadence)';
   if (openCount === 0) {
     return `${header}\n\n_None — no cold sequences awaiting a call._`;
   }
-  // No web page for this lane — the HubSpot task is where the call gets worked.
   const backlogNote = openCount > rows.length
-    ? `\n\n_${openCount} total open (work the HubSpot tasks); showing ${rows.length}._`
-    : `\n\n_${openCount} open — see HubSpot tasks. Lead with the free profile._`;
+    ? `\n\n_${openCount} total open in [cold call queue](${queueUrl}); showing ${rows.length}._`
+    : `\n\n_[Open cold call queue](${queueUrl}) (${openCount} pending) — lead with the free profile._`;
   if (rows.length === 0) {
     return `${header}${backlogNote}`;
   }

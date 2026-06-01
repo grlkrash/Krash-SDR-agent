@@ -191,7 +191,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     '',
     renderReactivationsToCall(reactivationCallRows, openReactivationCallCount),
     '',
-    renderColdCallsToMake(coldCallRows, openColdCallCount),
+    renderColdCallsToMake(coldCallRows, publicUrl, openColdCallCount),
     '',
     renderMeetingFollowups(meetingFollowupRows, openMeetingFollowupCount),
     '',
