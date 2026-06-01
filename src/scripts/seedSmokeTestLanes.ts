@@ -277,13 +277,13 @@ const seedLane = async (lane: LaneDef, ownerEmail: string, phone: string): Promi
       data: {
         leadId: lead.id,
         kind: 'cold',
-        subject: `${lane.name} — families searching for IOP in ${lane.city}`,
+        subject: `${lane.name} — why ${lane.city} families aren't finding your IOP`,
         body: [
           'Mark,',
           '',
-          `Families in ${lane.city} are searching for IOP programs right now — your ${lane.name} site came up in our intake scan because the IOP page has no schema markup and you're not listed on Psychology Today.`,
+          `Families in ${lane.city} are searching for IOP right now. While reviewing local providers, two things stood out on your ${lane.name} site: the IOP page has no schema markup, and you're not listed on Psychology Today. Both make it harder for searching families to find you.`,
           '',
-          'Worth a 15-minute walkthrough of how Sobriety Select routes private-pay families to centers with open beds?',
+          'Sobriety Select helps families searching for care find centers like yours. Worth 15 minutes to walk through it? I can do Tuesday at 2:00 PM CT or Thursday at 10:00 AM CT.',
           '',
           'Sonia',
         ].join('\n'),
@@ -305,7 +305,9 @@ const seedLane = async (lane: LaneDef, ownerEmail: string, phone: string): Promi
       [
         'Mark,',
         '',
-        `Your Select renewal for ${lane.name} is coming up — I wanted to reach out early to confirm we're continuing together and lock in your next contract period.`,
+        `Your renewal for ${lane.name} is coming up, and I wanted to reach out early to make sure there's no gap in coverage for the families you serve.`,
+        '',
+        "It's been a good run together, and I'd like to keep it going into the next contract period.",
         '',
         'Can you do Tuesday at 2:00 PM ET or Thursday at 10:00 AM ET for a quick call?',
         '',

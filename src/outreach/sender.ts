@@ -24,6 +24,7 @@ import { isLandline, twilio } from '../shared/twilio.js';
 import { isAutoVoicemailAllowed } from '../shared/voicemailEligibility.js';
 import { isSmokeTestLead } from '../shared/smokeTestLead.js';
 import { isTcpaCallingHoursOpen, isVm1SendWindowOpen } from '../shared/voicemailSendWindow.js';
+import { findSmokeTokens, isSmokeTestRecipient } from './smokeTokenGuard.js';
 import { flagRenewalForCall } from './renewalCallFlag.js';
 import { appendPostSalePhoneFooter } from '../shared/phoneConsentFooter.js';
 
@@ -368,6 +369,24 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
       priorWrittenConsent: lead.priorWrittenConsent,
     });
   }
+
+  // Hard gate: a draft carrying smoke-test tokens may only go to the operator's
+  // own test/brief inbox. Headed anywhere else, refuse rather than ship "SMOKE"
+  // copy to a real prospect.
+  const smokeTokens = findSmokeTokens(`${subject}\n${outboundBody}`);
+  if (smokeTokens.length > 0 && !isSmokeTestRecipient(targetEmail)) {
+    await prisma.draft.update({
+      where: { id: draftId },
+      data: { status: 'sent-suppressed' },
+    });
+    await audit('sender.smoke-token-blocked', draftId, {
+      leadId: lead.id,
+      email: targetEmail,
+      tokens: smokeTokens,
+    });
+    return;
+  }
+
   const gmailMessageId = await sendEmail({
     to: targetEmail,
     subject,
