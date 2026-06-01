@@ -36,14 +36,17 @@ export type BucketStats = {
   sent: number;
   opened: number;
   replied: number;
+  booked: number;
   openRate: number | null;
   replyRate: number | null;
+  bookRate: number | null;
 };
 
 export type EngagementOverview = {
-  totals: { sent: number; opened: number; replied: number };
+  totals: { sent: number; opened: number; replied: number; booked: number };
   openRate: number | null;
   replyRate: number | null;
+  bookRate: number | null;
   byBucket: BucketStats[];
   computedAt: string;
   openDataNote: string;
@@ -59,7 +62,10 @@ export type SentEmailRow = {
   sentAt: string;
   opened: boolean;
   replied: boolean;
+  booked: boolean;
 };
+
+export type LeadTemperature = 'booked' | 'hot' | 'warm' | 'cool' | 'cold';
 
 export type LeadEngagementSummary = {
   leadId: string;
@@ -69,7 +75,8 @@ export type LeadEngagementSummary = {
   sent: number;
   opened: number;
   replied: number;
-  temperature: 'hot' | 'warm' | 'cool' | 'cold';
+  booked: number;
+  temperature: LeadTemperature;
   temperatureLabel: string;
   approachHint: string;
   emails: SentEmailRow[];
@@ -201,6 +208,10 @@ type EngagementData = {
   replyEvents: ReplyEvent[];
   repliedDraftIds: Set<string>;
   pixelOpenedDraftIds: Set<string>;
+  // Draft ids credited with sourcing a booked meeting, and the leads that
+  // booked at all (a booking with no sourcing draft still warms the lead).
+  bookedDraftIds: Set<string>;
+  bookedLeadIds: Set<string>;
 };
 
 let cachedData: { payload: EngagementData; expiresAt: number } | null = null;
@@ -268,14 +279,48 @@ const loadPixelOpenedDraftIds = async (): Promise<Set<string>> => {
 const isDraftOpened = (draft: SentDraftRow, pixelOpenedDraftIds: Set<string>): boolean =>
   pixelOpenedDraftIds.has(draft.id);
 
+const BookedAuditMetaSchema = z.object({
+  leadId: z.string().optional(),
+  draftId: z.string().nullable().optional(),
+});
+
+const loadBookedEvents = async (): Promise<{
+  bookedDraftIds: Set<string>;
+  bookedLeadIds: Set<string>;
+}> => {
+  const rows = await prisma.auditLog.findMany({
+    where: { action: 'meeting.booked' },
+    select: { meta: true },
+  });
+  const bookedDraftIds = new Set<string>();
+  const bookedLeadIds = new Set<string>();
+  for (const row of rows) {
+    const parsed = BookedAuditMetaSchema.safeParse(row.meta);
+    if (!parsed.success) continue;
+    if (parsed.data.draftId !== null && parsed.data.draftId !== undefined) {
+      bookedDraftIds.add(parsed.data.draftId);
+    }
+    if (parsed.data.leadId !== undefined) bookedLeadIds.add(parsed.data.leadId);
+  }
+  return { bookedDraftIds, bookedLeadIds };
+};
+
 const loadEngagementData = async (): Promise<EngagementData> => {
-  const [drafts, replyEvents, pixelOpenedDraftIds] = await Promise.all([
+  const [drafts, replyEvents, pixelOpenedDraftIds, booked] = await Promise.all([
     loadSentDrafts(),
     loadReplyEvents(),
     loadPixelOpenedDraftIds(),
+    loadBookedEvents(),
   ]);
   const repliedDraftIds = new Set(replyEvents.map((e) => e.matchedDraftId));
-  return { drafts, replyEvents, repliedDraftIds, pixelOpenedDraftIds };
+  return {
+    drafts,
+    replyEvents,
+    repliedDraftIds,
+    pixelOpenedDraftIds,
+    bookedDraftIds: booked.bookedDraftIds,
+    bookedLeadIds: booked.bookedLeadIds,
+  };
 };
 
 const getEngagementData = async (refresh?: boolean): Promise<EngagementData> => {
@@ -318,6 +363,7 @@ const buildBadgesForLeads = (
       sent,
       openedByLead.get(leadId) ?? 0,
       repliedByLead.get(leadId) ?? 0,
+      data.bookedLeadIds.has(leadId) ? 1 : 0,
     );
     badges.set(leadId, {
       temperature: temp.temperature,
@@ -328,36 +374,43 @@ const buildBadgesForLeads = (
   return badges;
 };
 
+type BucketAccum = { sent: number; opened: number; replied: number; booked: number };
+const emptyAccum = (): BucketAccum => ({ sent: 0, opened: 0, replied: 0, booked: 0 });
+
 const buildBucketStats = (
   drafts: SentDraftRow[],
   repliedDraftIds: Set<string>,
   pixelOpenedDraftIds: Set<string>,
+  bookedDraftIds: Set<string>,
 ): BucketStats[] => {
-  const byBucket = new Map<EngagementBucketId, { sent: number; opened: number; replied: number }>();
+  const byBucket = new Map<EngagementBucketId, BucketAccum>();
   for (const id of BUCKET_ORDER) {
-    byBucket.set(id, { sent: 0, opened: 0, replied: 0 });
+    byBucket.set(id, emptyAccum());
   }
 
   for (const draft of drafts) {
     const bucket = bucketForKind(draft.kind);
-    const row = byBucket.get(bucket) ?? { sent: 0, opened: 0, replied: 0 };
+    const row = byBucket.get(bucket) ?? emptyAccum();
     row.sent += 1;
     if (isDraftOpened(draft, pixelOpenedDraftIds)) row.opened += 1;
     if (repliedDraftIds.has(draft.id)) row.replied += 1;
+    if (bookedDraftIds.has(draft.id)) row.booked += 1;
     byBucket.set(bucket, row);
   }
 
   return BUCKET_ORDER
     .map((bucket) => {
-      const row = byBucket.get(bucket) ?? { sent: 0, opened: 0, replied: 0 };
+      const row = byBucket.get(bucket) ?? emptyAccum();
       return {
         bucket,
         label: BUCKET_LABELS[bucket],
         sent: row.sent,
         opened: row.opened,
         replied: row.replied,
+        booked: row.booked,
         openRate: ratePct(row.opened, row.sent),
         replyRate: ratePct(row.replied, row.sent),
+        bookRate: ratePct(row.booked, row.sent),
       };
     })
     .filter((row) => row.sent > 0);
@@ -367,7 +420,15 @@ const computeTemperature = (
   sent: number,
   opened: number,
   replied: number,
-): { temperature: LeadEngagementSummary['temperature']; label: string; hint: string } => {
+  booked: number,
+): { temperature: LeadTemperature; label: string; hint: string } => {
+  if (booked > 0) {
+    return {
+      temperature: 'booked',
+      label: 'Booked — meeting on calendar',
+      hint: 'They booked. Stop sequencing — generate a prep brief and prepare to pivot from the free listing to a paid tier.',
+    };
+  }
   if (replied > 0) {
     return {
       temperature: 'hot',
@@ -397,25 +458,26 @@ const computeTemperature = (
 };
 
 const buildOverview = (
-  drafts: SentDraftRow[],
-  repliedDraftIds: Set<string>,
-  pixelOpenedDraftIds: Set<string>,
+  data: EngagementData,
   range: EngagementRange,
 ): EngagementOverview => {
-  const scoped = filterDraftsForRange(drafts, range);
+  const scoped = filterDraftsForRange(data.drafts, range);
   let opened = 0;
   let replied = 0;
+  let booked = 0;
   for (const draft of scoped) {
-    if (isDraftOpened(draft, pixelOpenedDraftIds)) opened += 1;
-    if (repliedDraftIds.has(draft.id)) replied += 1;
+    if (isDraftOpened(draft, data.pixelOpenedDraftIds)) opened += 1;
+    if (data.repliedDraftIds.has(draft.id)) replied += 1;
+    if (data.bookedDraftIds.has(draft.id)) booked += 1;
   }
   const sent = scoped.length;
 
   return {
-    totals: { sent, opened, replied },
+    totals: { sent, opened, replied, booked },
     openRate: ratePct(opened, sent),
     replyRate: ratePct(replied, sent),
-    byBucket: buildBucketStats(scoped, repliedDraftIds, pixelOpenedDraftIds),
+    bookRate: ratePct(booked, sent),
+    byBucket: buildBucketStats(scoped, data.repliedDraftIds, data.pixelOpenedDraftIds, data.bookedDraftIds),
     computedAt: new Date().toISOString(),
     openDataNote: OPEN_DATA_NOTE,
     range,
@@ -429,7 +491,7 @@ export const getEngagementOverview = async (opts?: {
 }): Promise<EngagementOverview> => {
   const range = opts?.range ?? 'all';
   const data = await getEngagementData(opts?.refresh === true);
-  return buildOverview(data.drafts, data.repliedDraftIds, data.pixelOpenedDraftIds, range);
+  return buildOverview(data, range);
 };
 
 export const getEngagementDashboardBundle = async (
@@ -439,7 +501,7 @@ export const getEngagementDashboardBundle = async (
   const range = opts?.range ?? 'all';
   const data = await getEngagementData(opts?.refresh === true);
   return {
-    overview: buildOverview(data.drafts, data.repliedDraftIds, data.pixelOpenedDraftIds, range),
+    overview: buildOverview(data, range),
     badges: buildBadgesForLeads(leadIds, data, range),
   };
 };
@@ -468,11 +530,14 @@ export const getLeadEngagementSummary = async (
 
   let opened = 0;
   let replied = 0;
+  let booked = 0;
   const emails: SentEmailRow[] = leadDrafts.map((draft) => {
     const wasOpened = isDraftOpened(draft, data.pixelOpenedDraftIds);
     const wasReplied = repliedDraftIds.has(draft.id);
+    const wasBooked = data.bookedDraftIds.has(draft.id);
     if (wasOpened) opened += 1;
     if (wasReplied) replied += 1;
+    if (wasBooked) booked += 1;
     const bucket = bucketForKind(draft.kind);
     return {
       draftId: draft.id,
@@ -482,10 +547,16 @@ export const getLeadEngagementSummary = async (
       sentAt: draft.sentAt.toISOString(),
       opened: wasOpened,
       replied: wasReplied,
+      booked: wasBooked,
     };
   });
 
-  const temp = computeTemperature(leadDrafts.length, opened, replied);
+  const temp = computeTemperature(
+    leadDrafts.length,
+    opened,
+    replied,
+    booked > 0 || data.bookedLeadIds.has(leadId) ? 1 : 0,
+  );
 
   return {
     leadId,
@@ -495,6 +566,7 @@ export const getLeadEngagementSummary = async (
     sent: leadDrafts.length,
     opened,
     replied,
+    booked,
     temperature: temp.temperature,
     temperatureLabel: temp.label,
     approachHint: temp.hint,

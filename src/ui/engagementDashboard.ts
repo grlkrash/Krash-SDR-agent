@@ -18,6 +18,7 @@ const escapeHtml = (s: string): string =>
   });
 
 const TEMPERATURE_CLASS: Record<LeadTemperatureBadge['temperature'], string> = {
+  booked: 'temp-booked',
   hot: 'temp-hot',
   warm: 'temp-warm',
   cool: 'temp-cool',
@@ -45,6 +46,7 @@ export const ENGAGEMENT_DASHBOARD_STYLE = `
   .temp-badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
     font-weight: 600; text-decoration: none; margin-left: 8px; vertical-align: middle; }
   .temp-badge:hover { text-decoration: none; opacity: 0.9; }
+  .temp-booked { background: #dcfce7; color: #166534; }
   .temp-hot { background: #fee2e2; color: #991b1b; }
   .temp-warm { background: #ffedd5; color: #9a3412; }
   .temp-cool { background: #e0f2fe; color: #075985; }
@@ -95,13 +97,14 @@ export const renderEngagementDashboard = (overview: EngagementOverview): string 
       <td class="num">${String(row.sent)}</td>
       <td class="num">${formatRate(row.openRate)}</td>
       <td class="num">${formatRate(row.replyRate)}</td>
+      <td class="num">${formatRate(row.bookRate)}</td>
     </tr>`).join('');
 
   const bucketTable = overview.byBucket.length === 0
     ? `<p class="engagement-note">No sent emails in ${escapeHtml(overview.rangeLabel.toLowerCase())}.</p>`
     : `<table class="engagement-table">
         <thead><tr>
-          <th>Type</th><th>Sent</th><th>Open</th><th>Reply</th>
+          <th>Type</th><th>Sent</th><th>Open</th><th>Reply</th><th>Book</th>
         </tr></thead>
         <tbody>${bucketRows}</tbody>
       </table>`;
@@ -117,6 +120,10 @@ export const renderEngagementDashboard = (overview: EngagementOverview): string 
       <div class="engagement-metric">
         <div class="val">${formatRate(overview.replyRate)}</div>
         <div class="lbl">Avg reply rate</div>
+      </div>
+      <div class="engagement-metric">
+        <div class="val">${formatRate(overview.bookRate)}</div>
+        <div class="lbl">Avg book rate</div>
       </div>
       <div class="engagement-metric">
         <div class="val">${String(overview.totals.sent)}</div>
@@ -160,13 +167,14 @@ export const renderLeadEngagementPage = (summary: LeadEngagementSummary): string
       <td>${formatSentDate(e.sentAt)}</td>
       <td class="num">${e.opened ? '<span class="engagement-yes">Yes</span>' : '<span class="engagement-no">—</span>'}</td>
       <td class="num">${e.replied ? '<span class="engagement-yes">Yes</span>' : '<span class="engagement-no">—</span>'}</td>
+      <td class="num">${e.booked ? '<span class="engagement-yes">Yes</span>' : '<span class="engagement-no">—</span>'}</td>
     </tr>`).join('');
 
   const emailTable = summary.emails.length === 0
     ? `<p class="engagement-note">No sent emails for this lead in ${escapeHtml(summary.rangeLabel.toLowerCase())}.</p>`
     : `<table class="engagement-table">
         <thead><tr>
-          <th>Type</th><th>Sent</th><th>Opened</th><th>Replied</th>
+          <th>Type</th><th>Sent</th><th>Opened</th><th>Replied</th><th>Booked</th>
         </tr></thead>
         <tbody>${emailRows}</tbody>
       </table>`;
@@ -189,7 +197,7 @@ export const renderLeadEngagementPage = (summary: LeadEngagementSummary): string
 <body class="lead-engagement-page">
   <a class="back-link" href="/queue${backQs}">← Back to queue</a>
   <h1>${escapeHtml(summary.leadName)}</h1>
-  <div class="lead-engagement-meta">${escapeHtml(summary.city)}, ${escapeHtml(summary.state)} · ${escapeHtml(summary.rangeLabel)} · ${String(summary.sent)} sent · ${String(summary.opened)} opened · ${String(summary.replied)} replied</div>
+  <div class="lead-engagement-meta">${escapeHtml(summary.city)}, ${escapeHtml(summary.state)} · ${escapeHtml(summary.rangeLabel)} · ${String(summary.sent)} sent · ${String(summary.opened)} opened · ${String(summary.replied)} replied · ${String(summary.booked)} booked</div>
   <div class="engagement-range-filters" role="toolbar" aria-label="Engagement time range">${rangeFilters}</div>
   <span class="temp-badge ${tempCls}">${escapeHtml(summary.temperatureLabel)}</span>
   <div class="approach-hint"><strong>Suggested approach:</strong> ${escapeHtml(summary.approachHint)}</div>
