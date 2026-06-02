@@ -12,6 +12,14 @@ describe('scanLeaks', () => {
     expect(scanLeaks(body)).toEqual([]);
   });
 
+  it('allows market-pressure sentences with cost/pricier in paid-search context', () => {
+    const body = [
+      'Most operators compete on the same paid search keyword auctions, and those channels keep getting pricier.',
+      'Sobriety Select is a map-forward directory with rich profiles.',
+    ].join(' ');
+    expect(scanLeaks(body)).toEqual([]);
+  });
+
   it('blocks SS pricing leaks', () => {
     const body = 'Our listing fee is $9600 per year for your facility.';
     const hits = scanLeaks(body);

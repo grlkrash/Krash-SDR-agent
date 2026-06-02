@@ -26,7 +26,29 @@ const LEAK_PATTERNS: ReadonlyArray<{ label: string; rx: RegExp }> = [
 
 // Sentences citing deck-verified industry inflation stats — safe for leak scan.
 const INDUSTRY_YOY_STAT_RX = /\d{1,3}\s*%\s*(?:year\s*over\s*year|year-over-year|\byoy\b)/i;
-const INDUSTRY_CONTEXT_RX = /\b(?:paid search|keyword auction|drug rehab|advertis|google ads|restricted channel|few places)\b/i;
+const INDUSTRY_CONTEXT_RX = /\b(?:paid search|keyword auction|drug rehab|advertis|google ads|restricted channel|few places|operators|channels|auctions?)\b/i;
+
+const isAllowedIndustryCostSentence = (trimmed: string): boolean =>
+  /\b(?:cost|costs|pricier|expensive|bidding)\b/i.test(trimmed)
+  && (
+    INDUSTRY_CONTEXT_RX.test(trimmed)
+    || /\b(?:families searching|intake|census|operators in|competing on|affordable channels)\b/i.test(trimmed)
+  );
+
+// Strip market-context pricing words from the scan copy. SS-pricing leaks keep
+// dollar amounts or "Sobriety Select" in the same sentence.
+const stripMarketCostSentences = (body: string): string => {
+  const sentences = body.split(/(?<=[.!?])\s+/);
+  const kept = sentences.filter((sentence) => {
+    const trimmed = sentence.trim();
+    if (trimmed === '') return false;
+    if (!/\b(?:cost|costs|pricier|expensive|fee|fees|pricing|price)\b/i.test(trimmed)) return true;
+    if (/\$\s?\d/.test(trimmed)) return true;
+    if (/\bsobriety select\b/i.test(trimmed)) return true;
+    return false;
+  });
+  return kept.join(' ');
+};
 
 const stripSubstrings = (body: string, ignoreSubstrings: string[]): string => {
   let cleaned = body;
@@ -38,8 +60,8 @@ const stripSubstrings = (body: string, ignoreSubstrings: string[]): string => {
   return cleaned;
 };
 
-// Remove allowed industry-stat sentences from the scan copy only — the live
-// email body is unchanged.
+// Remove allowed industry-stat and market-pressure sentences from the scan
+// copy only — the live email body is unchanged.
 const stripIndustryStatSentences = (body: string): string => {
   const sentences = body.split(/(?<=[.!?])\s+/);
   const kept = sentences.filter((sentence) => {
@@ -47,14 +69,14 @@ const stripIndustryStatSentences = (body: string): string => {
     if (trimmed === '') return false;
     const isIndustryStat =
       INDUSTRY_YOY_STAT_RX.test(trimmed) && INDUSTRY_CONTEXT_RX.test(trimmed);
-    return !isIndustryStat;
+    return !isIndustryStat && !isAllowedIndustryCostSentence(trimmed);
   });
   return kept.join(' ');
 };
 
 const prepareForLeakScan = (body: string, ignoreSubstrings: string[]): string => {
   const withoutSafe = stripSubstrings(body, [...BRAND_SAFE_PHRASES, ...ignoreSubstrings]);
-  return stripIndustryStatSentences(withoutSafe);
+  return stripMarketCostSentences(stripIndustryStatSentences(withoutSafe));
 };
 
 export const scanLeaks = (
