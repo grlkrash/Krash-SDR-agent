@@ -1,9 +1,23 @@
 # PRD — Sobriety Select SDR Agent (SSA)
 
-**Version:** 1.7
+**Version:** 1.8
 **Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
-**Last Updated:** May 29, 2026
+**Last Updated:** June 1, 2026
+
+**Changes from v1.7 (June 1, 2026):**
+
+- **Voicemail paused (operational state, §9.9).** `dropVoicemails` and `runSecondCalls` are **disabled** in `cronSchedule.ts` until counsel re-approves `VM_AI_AUTO_SEND`. Code is preserved; re-enable by setting `enabled: true` on both jobs. While paused, sent **reactivations** route to a **manual call lane** (§9.10) instead of AI vm drops.
+- **Cold-call cadence (§9.6).** After a cold email sends to a lead with `phoneE164`, SSA opens a **3-touch human call sequence** on business days **2, 5, and 9** (`flagColdForCall` → `coldCallFollowups` 8:10 AM ET). Operator queue at **`/cold-call`** with one-click disposition (Connected / No answer / Done); each touch logs a HubSpot call engagement. Sequence retires on reply, meeting booked, or BD-9 window expiry.
+- **Reactivation call lane (§9.10).** Single HubSpot call task **1 business day** after a sent reactivation email; **14-day window**; surfaces in daily brief **"Reactivations to call"** (no dedicated web queue — HubSpot task is system of record).
+- **Meeting attribution + book rate (§9.5, §9.6).** Daily `attributeMeetings` (4:45 PM ET) credits HubSpot meetings to the most recent outbound draft (`AuditLog 'meeting.booked'`). Engagement dashboard adds **avg book rate**, per-bucket **Book** column, and **Booked — meeting on calendar** temperature badge. Reply rate alone under-counts conversion — many prospects book via calendar link without replying.
+- **Call disposition sync (§9.5).** Daily `syncCallDispositions` (4:50 PM ET) pulls outbound HubSpot call engagements into `AuditLog 'hubspot.call-synced'`. Dashboard shows **cold connect rate** (app-logged `/cold-call` dispositions) and **HubSpot connect rate** (account-wide superset, includes calls logged directly in HubSpot).
+- **Engagement time filters (§9.5).** Dashboard, temperature badges, and JSON API honor `?period=7d|30d|60d|90d|all` (default `all`). Smoke-test leads (`SMOKE_TEST_LEAD_ID`, `SMOKE ` name prefix, `sourceMeta.smokeLane`) are **excluded** from engagement stats and production call queues.
+- **Directory exclusions (§9.2).** Daily `syncDirectoryExclusions` (6:15 AM ET) flags verified partner listings (`subscriptionType` = `subscribe` or `ads`) as `directory-listed` — cold excluded, not `doNotContact`. Manual CSV import via `data/exclusions/` for directory + paying-client lists.
+- **Cold email quality gates (§9.4).** Deterministic post-generation checks in `coldEmailQuality.ts`: body 120+ words, SS-identity markers, **free-listing guardrails** (no outcome guarantees, no catastrophized invisibility claims), subject ≤6 words / ≤50 chars with prospect token, banned spam patterns. Failed checks trigger one personalization retry; still failing → skip + `AuditLog`.
+- **Free-listing cold angle (§9.4, §9.11).** Cold emails lead with offering to claim Sobriety Select's **free basic directory profile** (tier-gated copy in `coldEmail.ts`). Prep brief adds **"Free listing → premium pivot"** section when `freeListingOffered=true`.
+- **Meeting follow-ups (§9.8).** Passed booked meetings surface in daily brief for operator-decided recap (held) or reschedule (no-show); `src/prompts/reschedule.ts` drafts the nudge.
+- **HTML email rendering.** Outbound sends and brief emails render markdown bodies as HTML (`markdownHtml.ts` + `emailHtml.ts`) — no raw `**bold**` in Gmail.
 
 **Changes from v1.6 (May 29, 2026):**
 
@@ -44,7 +58,7 @@
 
 - Added three high-value enrichment signals: competing-directory presence (Psychology Today, Rehabs.com, Recovery.com), LinkedIn hiring activity, and marketing tech stack detection (HubSpot/Salesforce/CallRail tags found in HTML)
 - Added **discovery call prep brief generator** to V1 — the 5-minute pre-call document that turns Sonia into a psychic on every call
-- Added `.cursorrules` and CURSOR_GUIDE.md as committed repo artifacts so Cursor builds correctly the first time
+- Added `.cursorrules` and `CURSOR GUIDE - SDR agent v2.md` as committed repo artifacts so Cursor builds correctly the first time
 - Schema: enrichment signals live inside `Enrichment.painPoints` JSON; PRD §9.7 reply-detection adds two additive nullable columns on `Draft` (`inboundGmailMessageId @unique`, `hubspotInboundEmailId`) — additive migration, no data loss
 - **Reply detection (§9.7) hardened.** Race-safe dedup via a UNIQUE index on `Draft.inboundGmailMessageId` (the Gmail id of the inbound that triggered a `kind='replied'` draft), plus a HubSpot `INCOMING_EMAIL` engagement is upserted to the contact + company timeline on every matched reply (idempotency tracked on `Draft.hubspotInboundEmailId`). The 5 PM daily brief gains a `📬 New replies` section pinning inbound replies from the last 24h at the top of Sonia's triage list.
 
@@ -74,6 +88,8 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 1. Automated no-reply follow-up touches 2–5 in a pre-approved sequence.
 2. **Reactivation AI voicemail** — only when `VM_AI_AUTO_SEND=true` (counsel-approved), `Lead.priorWrittenConsent=true`, a sent **reactivation** email exists, and Twilio AMD detects a **machine** (human answers get an honest automated disclosure + live bridge to Sonia, not a conversational AI agent).
 
+**Operational note (v1.8):** AI voicemail is **currently paused** — `dropVoicemails` and `runSecondCalls` are disabled in cron. Reactivations and cold prospects route to **manual live-call lanes** instead (§9.6, §9.10). Re-enable by flipping both jobs to `enabled: true` after counsel sign-off.
+
 -----
 
 ## 3. Automation Map (Locked)
@@ -86,11 +102,13 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 |Deal stage progression               |0% (manual in HubSpot)           |Forecast integrity          |
 |Cold email drafting                  |100% (Sonia approves)            |Volume + personalization    |
 |Cold email sending after approval    |100%                             |Throughput                  |
+|Cold-call cadence (3 touches, BD 2/5/9)|100% flag + HubSpot tasks      |Pairs email with live calls |
 |No-reply follow-ups (touches 2–5)    |100%                             |Low risk, high cadence      |
 |Replied / booked / no-show follow-ups|AI drafts, Sonia sends           |Relationship signal         |
 |Lost-deal nurture                    |100%                             |Long horizon, low risk      |
 |Cold deal reactivation flagging      |100% flag, AI drafts, Sonia sends|Salvage                     |
-|Reactivation AI vm (machine-only)    |100% when PEWC + `VM_AI_AUTO_SEND`|Post-consent salvage touch  |
+|Reactivation manual call (vm paused) |100% flag + HubSpot task         |Live call — replaces AI vm  |
+|Reactivation AI vm (machine-only)    |**PAUSED** — re-enable w/ counsel|Post-consent salvage touch  |
 |Daily pipeline scoring + brief       |100%                             |Morning briefing            |
 |**Discovery calls**                  |**0%**                           |**Sonia’s competitive moat**|
 |**Discovery call prep brief**        |**100% (generated on demand)**   |**5-min pre-call read**     |
@@ -138,6 +156,7 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 │   - scrape  - enrich              /queue   /copilot/ask       │
 │   - draft   - score               /approve /webhook/...       │
 │   - send    - follow-up           /health  /prep-brief        │
+│   - meetings - call sync          /cold-call /renewals-call   │
 │                                                                │
 │   ┌──────────────────────────────────────────────────────┐    │
 │   │  Service Layer — TWO LOGICAL DOMAINS                 │    │
@@ -181,7 +200,8 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 |Scraping  |Playwright + Cheerio                             |
 |CRM       |HubSpot Free + `@hubspot/api-client` (auth via Service Key — token in `HUBSPOT_ACCESS_TOKEN`, identical bearer-header transport as a private app; scopes managed on the Service Key in HubSpot UI)|
 |Email send|Gmail API via OAuth2 (`sonia@sobrietyselect.com`)|
-|Voice     |Twilio AMD voicemail drop + ElevenLabs TTS (`eleven_multilingual_v2`, pre-render only) |
+|Voice     |Twilio AMD voicemail drop + ElevenLabs TTS (`eleven_multilingual_v2` default; override via `ELEVENLABS_MODEL_ID`) |
+|Email body|Markdown source → HTML at send time (`markdownHtml.ts`, `emailHtml.ts`) |
 |Hosting   |Railway (web + cron + Postgres)                  |
 
 **Explicitly excluded:** Redis, WebSockets, OpenAI, Docker Compose, BullMQ, Turborepo, custom React UI, Salesforce, microservices.
@@ -193,13 +213,15 @@ No AI ever sends an email or makes a phone call without Sonia’s explicit appro
 ```
 sobriety-select-sdr/
 ├── .cursorrules                 # Cursor reads automatically
-├── CURSOR_GUIDE.md              # how Sonia uses Cursor with this repo
-├── PRD.md
-├── INSTRUCTIONS.md
+├── CURSOR GUIDE - SDR agent v2.md
+├── PRD - SDR agent v2.md
+├── INSTRUCTIONS- SDR agent v2.md
 ├── CHECKLIST.md
 ├── README.md
 ├── RAILWAY.md
 ├── railway.toml
+├── data/
+│   └── exclusions/              # directory + client CSV imports (see data/exclusions/README.md)
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
@@ -221,9 +243,16 @@ sobriety-select-sdr/
 │   │   ├── signals.ts           # NEW: directory check, hiring, tech stack
 │   │   ├── hubspotSync.ts
 │   │   ├── syncDealRenewalDates.ts  # closedate + term → ss_renewal_date
+│   │   ├── exclusions/          # directory API sync + CSV import
 │   │   └── scoring.ts
 │   ├── outreach/                # Relationship domain
 │   │   ├── draftCold.ts
+│   │   ├── coldEmailQuality.ts  # v1.8: subject + body quality gates
+│   │   ├── coldCallFlag.ts      # v1.8: 3-touch cold-call cadence
+│   │   ├── reactivationCallFlag.ts  # v1.8: manual reactivation calls (vm paused)
+│   │   ├── meetingAttribution.ts    # v1.8: credit meetings to sourcing draft
+│   │   ├── meetingFollowup.ts       # v1.8: passed-meeting recap/reschedule surfacing
+│   │   ├── callDispositionSync.ts   # v1.8: HubSpot call sync for dashboard
 │   │   ├── sequencer.ts
 │   │   ├── replyWatcher.ts
 │   │   ├── quarterlyCheckin.ts
@@ -233,9 +262,14 @@ sobriety-select-sdr/
 │   │   ├── voicemail.ts
 │   │   ├── prepBrief.ts         # NEW: discovery call prep
 │   │   ├── dailyBrief.ts
-│   │   ├── emailEngagementStats.ts  # v1.7: open/reply rates for /queue dashboard
+│   │   ├── emailEngagementStats.ts  # v1.7+: open/reply/book rates + call stats
 │   │   └── sender.ts
 │   ├── shared/
+│   │   ├── coldCallTouches.ts   # v1.8: BD 2/5/9 touch math
+│   │   ├── exclusion.ts         # v1.8: directory-listed / existing-client cold skip
+│   │   ├── emailHtml.ts         # v1.8: HTML email rendering
+│   │   ├── markdownHtml.ts      # v1.8: markdown → HTML for sends + briefs
+│   │   ├── logHubspotCall.ts    # v1.8: outbound call engagement writer
 │   │   ├── renewalCallTouches.ts
 │   │   ├── hubspotTask.ts
 │   │   ├── smokeTestLead.ts
@@ -255,6 +289,7 @@ sobriety-select-sdr/
 │   │   └── unsubscribeToken.ts
 │   ├── prompts/
 │   │   ├── coldEmail.ts
+│   │   ├── reschedule.ts        # v1.8: no-show / re-book nudge
 │   │   ├── websiteAnalyzer.ts
 │   │   ├── followUpTemplates.ts
 │   │   ├── replied.ts
@@ -267,8 +302,9 @@ sobriety-select-sdr/
 │   │   └── dailyBrief.ts
 │   ├── ui/
 │   │   ├── queue.ts
-│   │   ├── engagementDashboard.ts   # v1.7: engagement panel + lead detail HTML
+│   │   ├── engagementDashboard.ts   # v1.7+: engagement panel + lead detail HTML
 │   │   ├── renewalsCall.ts      # v1.6: /renewals-call live renewal queue
+│   │   ├── coldCall.ts          # v1.8: /cold-call disposition queue
 │   │   ├── manualVmQueue.ts
 │   │   ├── copilot.ts
 │   │   └── prepBrief.ts         # NEW: /prep-brief/:dealId route
@@ -370,32 +406,36 @@ Note: `Enrichment.signals` is a new JSON field added to the existing model. This
 
 ### 9.1 Daily Cron Schedule
 
-|Cron          |Time (ET)|Job                   |Domain  |
-|--------------|---------|----------------------|--------|
-|`0 5 * * *`   |5:00 AM  |`dailyScrape`         |pipeline|
-|`30 5 * * *`  |5:30 AM  |`enrichAll`           |pipeline|
-|`45 5 * * *`  |5:45 AM  |`syncToHubspot`       |pipeline|
-|`0 6 * * *`   |6:00 AM  |`scorePipeline`       |pipeline|
-|`30 6 * * *`  |6:30 AM  |`draftColdBatch`      |outreach|
-|`0 7 * * *`   |7:00 AM  |`draftFollowups`      |outreach|
-|`15 7 * * *`  |7:15 AM  |`runSecondCalls`      |outreach|
-|`30 7 * * *`  |7:30 AM  |`runSequences`        |outreach|
-|`0 8 * * *`   |8:00 AM  |`renewalCallFollowups`|outreach|
-|`0 8 * * *`   |8:00 AM  |`draftUpsellBatch`    |outreach|
-|`0 9 * * *`   |9:00 AM  |`quarterlyCheckins`   |outreach|
-|`45 9 * * *`  |9:45 AM  |`syncDealRenewalDates`|pipeline|
-|`0 10 * * *`  |10:00 AM |`renewalWarnings`     |outreach|
-|`0 14 * * *`  |2:00 PM  |`dropVoicemails`      |outreach (reactivation + PEWC only)|
-|`*/5 * * * *` |~5 min   |`checkReplies`        |outreach|
-|`*/10 * * * *`|10 min   |`sendApproved`        |outreach|
-|`0 17 * * *`  |5:00 PM  |`sendDailyBrief`      |outreach|
-|`30 17 * * *` |5:30 PM  |`checkCostCaps`       |ops     |
-|`0 3 * * 1`   |Mon 3am  |`reactivation`        |outreach|
-|`0 4 * * 1`   |Mon 4am  |`refreshGoogleSignals`|pipeline|
+|Cron          |Time (ET)|Job                   |Domain  |Enabled|
+|--------------|---------|----------------------|--------|-------|
+|`0 5 * * *`   |5:00 AM  |`dailyScrape`         |pipeline|yes    |
+|`30 5 * * *`  |5:30 AM  |`enrichAll`           |pipeline|yes    |
+|`45 5 * * *`  |5:45 AM  |`syncToHubspot`       |pipeline|yes    |
+|`0 6 * * *`   |6:00 AM  |`scorePipeline`       |pipeline|yes    |
+|`15 6 * * *`  |6:15 AM  |`syncDirectoryExclusions`|pipeline|yes|
+|`30 6 * * *`  |6:30 AM  |`draftColdBatch`      |outreach|yes    |
+|`0 7 * * *`   |7:00 AM  |`draftFollowups`      |outreach|yes    |
+|`15 7 * * *`  |7:15 AM  |`runSecondCalls`      |outreach|**no** (vm paused)|
+|`30 7 * * *`  |7:30 AM  |`runSequences`        |outreach|yes    |
+|`0 8 * * *`   |8:00 AM  |`renewalCallFollowups`|outreach|yes    |
+|`0 8 * * *`   |8:00 AM  |`draftUpsellBatch`    |outreach|yes    |
+|`10 8 * * *`  |8:10 AM  |`coldCallFollowups`   |outreach|yes    |
+|`0 9 * * *`   |9:00 AM  |`quarterlyCheckins`   |outreach|yes    |
+|`45 9 * * *`  |9:45 AM  |`syncDealRenewalDates`|pipeline|yes    |
+|`0 10 * * *`  |10:00 AM |`renewalWarnings`     |outreach|yes    |
+|`0 14 * * *`  |2:00 PM  |`dropVoicemails`      |outreach|**no** (vm paused)|
+|`*/5 * * * *` |~5 min   |`checkReplies`        |outreach|yes    |
+|`*/10 * * * *`|10 min   |`sendApproved`        |outreach|yes    |
+|`45 16 * * *` |4:45 PM  |`attributeMeetings`   |outreach|yes    |
+|`50 16 * * *` |4:50 PM  |`syncCallDispositions`|outreach|yes    |
+|`0 17 * * *`  |5:00 PM  |`sendDailyBrief`      |outreach|yes    |
+|`30 17 * * *` |5:30 PM  |`checkCostCaps`       |ops     |yes    |
+|`0 3 * * 1`   |Mon 3am  |`reactivation`        |outreach|yes    |
+|`0 4 * * 1`   |Mon 4am  |`refreshGoogleSignals`|pipeline|yes    |
 
 Prep briefs are **generated on demand** via `GET /prep-brief/:dealId` — no cron needed. Sonia hits it 5 minutes before each call.
 
-**Railway deployment:** One always-on web service plus one cron service on `*/5 * * * *` UTC running `cronTick.ts`, which dispatches PRD jobs by Eastern time. See `RAILWAY.md`. `draftFollowups` (7:00 AM ET) batch-drafts approval-gated `kind='nudge'` emails for leads in the awaiting-reply state (same rules as `/queue` §9.5); `runSequences` (7:30 AM) auto-sends template touches 2–5. `dropVoicemails` (2:00 PM) drafts consent-gated vm-1 for **reactivation only**; renewals route to `/renewals-call` (§9.10).
+**Railway deployment:** One always-on web service plus one cron service on `*/5 * * * *` UTC running `cronTick.ts`, which dispatches PRD jobs by Eastern time. See `RAILWAY.md`. `draftFollowups` (7:00 AM ET) batch-drafts approval-gated `kind='nudge'` emails for leads in the awaiting-reply state (same rules as `/queue` §9.5); `runSequences` (7:30 AM) auto-sends template touches 2–5. **`dropVoicemails` and `runSecondCalls` are disabled** while AI voicemail is paused — reactivations flag for manual call (§9.10); cold prospects use the call cadence (§9.6). Re-enable both jobs after counsel approves `VM_AI_AUTO_SEND`.
 
 ### 9.2 Lead Sourcing (pipeline)
 
@@ -405,6 +445,21 @@ Prep briefs are **generated on demand** via `GET /prep-brief/:dealId` — no cro
 1. Dedupe + normalize → upsert Lead
 
 **Success criteria:** ≥5,000 deduplicated leads in FL/CA/TX after week 1.
+
+### 9.2.1 Directory & client exclusions (pipeline) — v1.8
+
+Facilities already on Sobriety Select or already paying must not receive cold "join our directory" mail. Exclusion metadata lives in `Lead.sourceMeta` and/or `Enrichment.signals` (`excludeFromCold: true`, kind `directory-listed` or `existing-client`). This is **not** `doNotContact` — renewals/upsells still work for paying clients.
+
+**Daily sync (`syncDirectoryExclusions`, 6:15 AM ET — before `draftColdBatch`):**
+
+1. Calls Sobriety Select's public search API (`/api/medical-centers/search`)
+1. Pulls verified partner listings (`subscriptionType` = `subscribe` or `ads`) — ~80–90 nationwide
+1. Matches to `Lead` rows and flags `directory-listed`
+1. Rejects pending/approved/paused **cold** drafts for matched leads
+
+**Manual CSV import:** Drop files in `data/exclusions/incoming/{directory,client}/`, run `npm run exclusions:import -- --incoming`. See `data/exclusions/README.md`. Client imports also upsert `Suppression` when email/phone present.
+
+**Defense in depth:** `draftColdBatch`, `sequencer`, and `sender` all call `isExcludedFromCold()` before touching a lead.
 
 ### 9.3 Enrichment Workflow (pipeline) — EXPANDED in v1.2
 
@@ -445,6 +500,27 @@ The new signals influence `expectedProduct`:
 
 Tier-aware via `expectedProduct`. Now also receives the three new signals as personalization fuel. The evaluator scores personalization — referencing a hiring post or a missing-from-Psychology-Today fact dramatically boosts the score and the relevance.
 
+**Free-listing angle (v1.8).** The primary cold hook is offering to claim Sobriety Select's **free basic directory profile** — a low-commitment "yes" that puts the center on the map where families search by region and insurance. Tier-gated copy in `coldEmail.ts`:
+
+- **claimed/solo:** Lead with the free profile as the reason-to-talk.
+- **select:** Open with local census observation, then offer free profile claim before the call.
+- **premium / big spenders:** Lead with paid-search pressure; mention free profile as proof we already have them on the map.
+
+Paid tiers belong on the **call**, never in the cold email. The word "free" stays **out of the subject line** (filter risk); it belongs in the body.
+
+**Quality gates (v1.8, `coldEmailQuality.ts`).** After Claude generates body + subject, deterministic checks run before the draft is saved:
+
+| Check | Rule |
+| --- | --- |
+| Body length | ≥120 words (target 130–165) |
+| SS identity | ≥2 markers (Sobriety Select, map-forward, profiles, etc.) |
+| Free-listing guardrails | No outcome guarantees ("fill your beds", "guaranteed leads"); no catastrophized invisibility ("nobody can find you", "invisible") |
+| Subject words | ≤6 words, ≤50 chars |
+| Subject token | Must include a facility-name token (≥4 chars) |
+| Subject spam | No `!!`, ALL CAPS spam, banned words (`guaranteed`, `revolutionary`, etc.), no `?` or `!` |
+
+Failed quality + low personalization → one retry with explicit fix instructions. Still failing → skip + `AuditLog 'draftCold.quality-failed'`.
+
 Sales hooks unlocked:
 
 - **Missing from competing directories:** “Noticed Hope Haven isn’t listed on Psychology Today or Rehabs.com — local family searches are routing entirely to your competitors.”
@@ -470,7 +546,20 @@ Same as v1.1, plus:
 
 **Triage hub (v1.6).** `/queue` opens with a **triage strip**: pending email count, renewals-to-call count (links to `/renewals-call`), manual-vm count (links to `/manual-vm-queue`), awaiting-reply count, and approved count. Pending drafts support **lane filters** via `?lane=`: `all` (default), `post-sale` (renewal / reactivation / quarterly / upsell), `sequence` (cold + followup-*), `replies` (replied / noshow), `vm` (voicemail drafts). Post-sale cards show a clickable **phone line** (`tel:`) when `phoneE164` is on file. A compact **Renewals to call** section (top 5 open sequences) appears when any renewal call cadence is active. Toolbar links: Sales co-pilot, Renewals to call, Manual VM queue.
 
-**Engagement dashboard (v1.7).** Below the triage strip, `/queue` shows an **email engagement panel** with three headline metrics: **avg open rate**, **avg reply rate**, and **emails sent** (all-time, across every `Draft` with `status IN ('sent','auto-sent')` excluding voicemail kinds). A collapsible **“Break down by email type”** table stratifies the same rates by kind bucket:
+**Engagement dashboard (v1.7, expanded v1.8).** Below the triage strip, `/queue` shows an **email engagement panel** scoped by time range (`?period=7d|30d|60d|90d|all`, default `all`). Range pills persist across lane filters and sort mode.
+
+**Headline metrics:** **avg open rate**, **avg reply rate**, **avg book rate**, and **emails sent** (for the selected range, excluding voicemail kinds and smoke-test leads).
+
+**Call performance row (v1.8):**
+
+| Metric | Source |
+| --- | --- |
+| Cold connect rate | `AuditLog 'cold.call-touch'` from `/cold-call` dispositions |
+| Cold calls logged / connected / prospects | Same |
+| HubSpot connect rate | `AuditLog 'hubspot.call-synced'` — all outbound calls in account |
+| All calls (HubSpot) | Superset — includes calls logged directly in HubSpot |
+
+A collapsible **“Break down by email type”** table stratifies open, reply, and **book** rates by kind bucket:
 
 | Bucket label | Draft `kind` values |
 | --- | --- |
@@ -487,39 +576,64 @@ Only buckets with at least one send appear in the table — the panel stays comp
 **Rate inputs.**
 
 - **Reply rate (reliable).** Numerator = distinct outbound sends that received an inbound reply, attributed via `AuditLog` rows where `action='reply.draft-created'` and `meta.matchedDraftId` points at the sent draft. Denominator = count of sent email drafts in that bucket. This reuses the same dedup boundary as §9.7 (`Draft.inboundGmailMessageId @unique` on the resulting `kind='replied'` draft).
-- **Open rate (tracking pixel, v1.7.1).** Every email sent via `sendApproved` → `sender.ts` embeds a signed 1×1 pixel (`GET /track/open/:draftId?sig=…`) in the HTML part. The route returns a transparent GIF and writes `AuditLog 'email.opened'` once per draft (deduped). Signature uses `OPEN_TRACK_SECRET` (falls back to `UNSUBSCRIBE_SECRET`). Opens count toward the dashboard when the pixel loads — **not** a guaranteed read. Image-blocked clients under-report; Apple Mail Privacy Protection may inflate counts. Emails marked **Sent manually** from Gmail (`/mark-sent`) do not carry the pixel. Reply rate remains the primary actionable signal.
+- **Open rate (tracking pixel, v1.7.1).** Every email sent via `sendApproved` → `sender.ts` embeds a signed 1×1 pixel (`GET /track/open/:draftId?sig=…`) in the HTML part. The route returns a transparent GIF and writes `AuditLog 'email.opened'` once per draft (deduped). Signature uses `OPEN_TRACK_SECRET` (falls back to `UNSUBSCRIBE_SECRET`). Opens count toward the dashboard when the pixel loads — **not** a guaranteed read. Image-blocked clients under-report; Apple Mail Privacy Protection may inflate counts. Emails marked **Sent manually** from Gmail (`/mark-sent`) do not carry the pixel. Reply rate remains a primary actionable signal.
+- **Book rate (v1.8).** Numerator = sends credited with sourcing a HubSpot meeting via `AuditLog 'meeting.booked'` (`attributeMeetings` cron attributes each meeting to the most recent outbound draft sent within 90 days). Denominator = sent drafts in bucket. Many prospects book via calendar link without replying — book rate captures conversion reply rate misses.
 
 **Per-lead temperature.** Draft cards (pending + approved), and rows in the **💤 Sent — awaiting reply** section, show a clickable badge when the lead has prior sends:
 
 | Badge | Rule | Operator hint |
 | --- | --- | --- |
+| **Booked — meeting on calendar** | HubSpot meeting attributed to this lead | Stop sequencing — prep brief + pivot from free listing to paid tier on the call |
 | **Hot — replied** | At least one inbound reply recorded | Prioritize thoughtful reply or call; skip generic sequence templates |
 | **Warm — opened** | Tracking pixel loaded, no reply yet | Shorter nudge with one clear ask, or a different pain-point angle |
 | **Cool — awaiting signal** | 1–2 sends, no open/reply yet | Stay on sequence timing unless awaiting-reply window triggers nudge |
 | **Cold — no engagement** | 3+ sends, no open or reply | Consider pausing sequence, nudge, or alternate channel |
 
-Clicking a badge opens **`GET /queue/lead-engagement/:leadId`** — a server-rendered page listing every sent email for that lead (type, date, opened?, replied?) plus the suggested approach text. Same auth cookie as `/queue` (`queueAuth`).
+Clicking a badge opens **`GET /queue/lead-engagement/:leadId`** — a server-rendered page listing every sent email for that lead (type, date, opened?, replied?, booked?) plus the suggested approach text. Honors the same `?period=` filter as the dashboard. Same auth cookie as `/queue` (`queueAuth`).
 
-**JSON API (v1.7).** For scripts or future UI:
+**Smoke-test exclusion (v1.8).** Leads matching `SMOKE_TEST_LEAD_ID`, name prefix `SMOKE `, or `sourceMeta.smokeLane` are excluded from engagement stats, cold-call queue, renewal/reactivation call queues, and meeting attribution display. Operator inbox validation only.
 
-- `GET /queue/engagement-stats` → full overview (`totals`, `openRate`, `replyRate`, `byBucket[]`, `computedAt`, `openDataNote`).
+**JSON API (v1.7+, v1.8 range).** For scripts or future UI:
+
+- `GET /queue/engagement-stats` → full overview (`totals`, `openRate`, `replyRate`, `bookRate`, `byBucket[]`, `callStats`, `computedAt`, `openDataNote`, `range`, `rangeLabel`).
 - `GET /queue/engagement-stats?leadId={id}` → single-lead `LeadEngagementSummary`.
-- `GET /queue/engagement-stats?refresh=1` → bypass the 5-minute in-process cache (HubSpot round-trips on refresh).
+- `GET /queue/engagement-stats?refresh=1` → bypass the 5-minute in-process cache.
+- `GET /queue/engagement-stats?period=30d` → scope all metrics to last 30 days.
 
-Implementation: `src/outreach/emailEngagementStats.ts` (aggregation), `src/ui/engagementDashboard.ts` (HTML), `src/shared/openTrackToken.ts` + `src/routes/openTrack.ts` (pixel). No schema change — opens live in `AuditLog`.
+Implementation: `src/outreach/emailEngagementStats.ts` (aggregation), `src/outreach/meetingAttribution.ts` (booking credit), `src/outreach/callDispositionSync.ts` (HubSpot call sync), `src/ui/engagementDashboard.ts` (HTML), `src/shared/openTrackToken.ts` + `src/routes/openTrack.ts` (pixel). No schema change — opens, bookings, and call dispositions live in `AuditLog`.
 
-**Specialized operator queues (v1.6).**
+**Specialized operator queues (v1.6+, v1.8).**
 
 | Route | Purpose |
 | --- | --- |
 | `/queue` | Email draft review + triage + engagement dashboard |
-| `/queue/lead-engagement/:leadId` | Per-lead send history, open/reply flags, temperature + approach hint |
-| `/queue/engagement-stats` | JSON engagement overview (optional `?leadId=`, `?refresh=1`) |
+| `/queue?period=30d` | Same, scoped to 30-day engagement window |
+| `/queue/lead-engagement/:leadId` | Per-lead send history, open/reply/book flags, temperature + approach hint |
+| `/queue/engagement-stats` | JSON engagement overview (optional `?leadId=`, `?refresh=1`, `?period=`) |
 | `/track/open/:draftId` | Signed 1×1 pixel — logs `email.opened` to AuditLog (no auth) |
+| `/cold-call` | Cold-call disposition queue — 3-touch cadence, one-click logging |
 | `/renewals-call` | Live renewal calls — 5 touches on BD 3–7, HubSpot task mirror |
 | `/manual-vm-queue` | State-law restricted leads (FL, OK, WA, IN, MA, TX, CA) — human-placed vm/call |
 
-### 9.6 Sending & Sequencing — unchanged from v1.1
+### 9.6 Sending, Sequencing & Cold-Call Cadence
+
+**Email send (unchanged core).** Approved drafts ship via Gmail API every 10 min (`sendApproved`). Markdown bodies render as HTML (`markdownHtml.ts` → `emailHtml.ts`). Tracking pixel embedded in HTML part. Post-sale emails always append phone-consent/opt-out footer.
+
+**Auto-sequence touches 2–5 (unchanged).** `runSequences` (7:30 AM ET) auto-sends template follow-ups for leads in the no-reply sequence.
+
+**Cold-call cadence (v1.8).** When a `kind='cold'` email sends to a lead with `phoneE164` on file (and not smoke-test / excluded / doNotContact), `flagColdForCall()` opens a **3-touch human call sequence**:
+
+| Touch | Due | HubSpot task | Operator surface |
+| --- | --- | --- | --- |
+| 1 | BD 2 after cold send | `Cold call 1/3 — {facility}` | `/cold-call`, daily brief |
+| 2 | BD 5 | `Cold call 2/3 — {facility}` | `coldCallFollowups` cron creates task |
+| 3 | BD 9 | `Cold call 3/3 — {facility}` | Window closes after BD 9 |
+
+**Disposition:** `/cold-call` offers Connected / No answer / Done buttons. Each logs `AuditLog 'cold.call-touch'` + HubSpot outbound call engagement. **Connected** closes the sequence. Sequence also retires on inbound reply, attributed meeting booked, or window expiry.
+
+**Operator guidance:** Lead with the free Sobriety Select profile offer; keep paid tier for the booked call. Prep brief link on each row when `hubspotCompanyId` exists.
+
+**Meeting attribution (v1.8).** `attributeMeetings` (4:45 PM ET) scans HubSpot meetings created in the last 30 days, maps company → Lead, credits the most recent attributable outbound draft (`AuditLog 'meeting.booked'` with `{ draftId, leadId, kind, startAt }`). Credits cold-call sequence retirement and engagement book rate.
 
 ### 9.7 Reply Detection — v1.2 additions
 
@@ -539,19 +653,24 @@ Implementation: `src/outreach/emailEngagementStats.ts` (aggregation), `src/ui/en
 
 Scoring unchanged from v1.1 (sorts by `score × expectedCommission`).
 
-**Daily brief sections (5:00 PM ET, v1.6 order of leverage):**
+**Daily brief sections (5:00 PM ET, v1.8 order of leverage):**
 
 1. `📬 New replies` — last 24h inbound (highest priority)
 2. `📈 Hiring spikes` — intent signal flips
-3. Hot leads + at-risk deals (scoring)
+3. Hot leads + at-risk deals (scoring; $0-weighted leads excluded from hot top-5)
 4. Suggested call list (prospect pool)
 5. **`📞 Renewals to call`** — open renewal call sequences (7-day window, link to `/renewals-call`)
-6. `🚨 Manual VM required` — restricted-state leads (`/manual-vm-queue`)
-7. Queue depth + yesterday stats
+6. **`📞 Reactivations to call`** — sent reactivations awaiting manual call (14-day window; vm paused)
+7. **`📞 Cold calls to make`** — open 3-touch cold-call sequences (link to `/cold-call`)
+8. **`📅 Meeting follow-ups`** — passed booked meetings needing recap or reschedule (operator decides held vs no-show)
+9. `🚨 Manual VM required` — restricted-state leads (`/manual-vm-queue`)
+10. Queue depth + yesterday stats (sent count, replies, meetings booked)
 
 ### 9.9 Voicemail Drops (AMD — consent-gated reactivation only)
 
-**Scope (v1.6).** AI voicemail applies **only** to **reactivation** prospects who have opted in via **prior express written consent (PEWC)** after a sent reactivation email. **Renewals never receive AI vm** — they use the live-call cadence in §9.10. **Cold-prospect vm is off.**
+> **⚠️ OPERATIONAL STATUS (v1.8): PAUSED.** `dropVoicemails` and `runSecondCalls` are **disabled** in `src/shared/cronSchedule.ts`. While paused, sent reactivations flag for **manual live call** (§9.10) and cold prospects use the **call cadence** (§9.6). All code, Twilio hooks, ElevenLabs rendering, and compliance wrappers are preserved. Re-enable by setting both jobs to `enabled: true` after counsel approves `VM_AI_AUTO_SEND=true` on web + cron.
+
+**Scope (v1.6, when enabled).** AI voicemail applies **only** to **reactivation** prospects who have opted in via **prior express written consent (PEWC)** after a sent reactivation email. **Renewals never receive AI vm** — they use the live-call cadence in §9.10. **Cold-prospect vm is off.**
 
 **What this is.** A standard Twilio outbound call with Answering Machine Detection (`DetectMessageEnd`, 30s timeout). The callee's phone **rings**. If Twilio classifies the answer as a machine (voicemail greeting + beep), Twilio plays a pre-rendered ElevenLabs MP3 (`eleven_multilingual_v2`) wrapped with **deterministic artificial-voice + opt-out disclosures** (`wrapVoicemailScript`). If a **human** answers, Twilio plays a brief **honest automated disclosure** (Twilio `<Say>`, not ElevenLabs — e.g. "This is an automated follow-up from Sobriety Select…") and **bridges to Sonia** on `SONIA_PHONE` with prep brief email + whisper. No conversational AI agent — live conversation is always the real operator.
 
@@ -593,7 +712,8 @@ Scoring unchanged from v1.1 (sorts by `score × expectedCommission`).
 
 - **Who:** Open HubSpot deals stale 30+ days with prior engagement (`replied` or `followup-*` draft history).
 - **Email:** Win-back tone — fresh angle + 15-min ask; optional PEWC footer if phone on file.
-- **After send + PEWC:** Optional consent-gated AI vm (§9.9). Cap 10 drafts/week.
+- **After send (v1.8, vm paused):** `flagReactivationForCall()` creates one HubSpot call task due **1 business day** after send. Surfaces in daily brief **"Reactivations to call"** for **14 days** or until the lead replies. No dedicated web queue — HubSpot task is system of record. Audit: `reactivation.call-flagged`, `reactivation.call-completed`.
+- **After send + PEWC (when vm re-enabled):** Optional consent-gated AI vm (§9.9). Cap 10 drafts/week.
 
 **Quarterly check-ins and upsell** — unchanged from v1.1 (draft + Sonia approves).
 
@@ -610,16 +730,19 @@ Scoring unchanged from v1.1 (sorts by `score × expectedCommission`).
 1. Pull recent activity from HubSpot: last 5 engagements (emails, notes, calls), all open tasks, deal stage history
 1. Generate brief via Claude with the prep-brief system prompt
 
-**Brief contains (~250 words, markdown-rendered):**
+**Brief contains (~250 words, markdown-rendered as HTML when emailed):**
 
 - **One-line summary:** “Hope Haven, 24-bed sober living in Asheville NC, owner Sarah Kim, expectedProduct=select ($240 commission)”
 - **The three sharpest data points** — usually pulled from `signals` (missing from PT, hiring 2 roles, runs CallRail)
 - **Pain points** (top 3 from the painPoints JSON)
 - **Conversation history** — 1-line summary of last 3 engagements
 - **The 3 questions to ask** — generated by Claude from context
-- **Known objections to expect** — based on tier (e.g., for Select: “we tried directories before”)
+- **Known objections to expect** — based on tier (e.g., for Select: “we tried directories before”). When `freeListingOffered=true`, always include the free-vs-paid objection with a grounded rebuttal.
+- **💎 Free listing → premium pivot** (v1.8, only when `freeListingOffered=true`) — two bullets: (1) confirm/claim the free basic profile live on the call; (2) specific incremental value of this prospect's expected tier over the free listing, grounded in a real signal. Honest framing only — no outcome guarantees.
 - **The angle to lead with** — single sentence Sonia uses as her opener
 - **Pricing reminder** — exact tier + price + commission
+
+`freeListingOffered` is derived from draft history: true when a sent `kind='cold'` email exists for this lead (they entered through the free-profile offer).
 
 Brief is *also* persisted as a `Draft` with `kind='prep-brief'`, status=‘sent’ (no approval needed — it’s not outbound), so it shows up in the lead’s history. Sonia can re-pull or share with Mark.
 
@@ -666,10 +789,12 @@ All prompts in `src/prompts/`. New file: `src/prompts/prepBrief.ts`.
 
 Required prompts:
 
-- `coldEmail.ts` — generator + evaluator (tier + signals-aware)
+- `coldEmail.ts` — generator + evaluator (tier + signals-aware, free-listing angle)
+- `coldEmailQuality.ts` lives in `src/outreach/` — deterministic quality gates, not a Claude prompt
 - `websiteAnalyzer.ts` — extracts owner, tier, painPoints
 - `followUpTemplates.ts` — rule-based touches 2–5
 - `replied.ts` — replied-thread drafter
+- `reschedule.ts` — no-show / re-book nudge (v1.8)
 - `quarterlyCheckin.ts` — 90/180/270-day touch (the `Q{N} listing analytics` soft offer resolves to the **current calendar quarter** 1-4, never customer tenure — see INSTRUCTIONS Prompt 9.1.1)
 - `renewalWarning.ts` — 60-day pre-renewal (term-aware via `ss_contract_term_months`)
 - `reactivation.ts` — stale-deal drafter
@@ -692,11 +817,15 @@ CAN-SPAM, TCPA, HIPAA, contract §7d, audit logging. See `kb/compliance/can-spam
 
 **v1.6 additions:**
 
-- **PEWC (prior express written consent)** for post-sale phone contact — click-through on `/consent-phone`; stored on `Lead.priorWrittenConsent`. Required before reactivation AI vm.
+- **PEWC (prior express written consent)** for post-sale phone contact — click-through on `/consent-phone`; stored on `Lead.priorWrittenConsent`. Required before reactivation AI vm (when re-enabled).
 - **Artificial-voice disclosures** injected deterministically on all vm scripts (`wrapVoicemailScript`) — not left to the LLM.
 - **STOP / unsubscribe replies** — `replyWatcher` detects opt-out text, suppresses email + phone, clears PEWC, cancels pending drafts.
 - **State matrix expanded** — TX and CA added to manual-only states (FL, OK, WA, IN, MA, TX, CA).
 - **Renewals** — live calls only; no prerecorded vm to existing clients without a separate counsel review path.
+
+**v1.8 operational:**
+
+- **AI voicemail paused** — `VM_AI_AUTO_SEND` unset; cron jobs disabled. Manual live calls for reactivations (HubSpot task) and cold prospects (`/cold-call` cadence). Counsel briefing HTML in `src/shared/counselBriefingHtml.ts` documents current posture for legal review.
 
 -----
 
@@ -706,6 +835,8 @@ Same as v1.1, plus new V1.2 KPI:
 
 - **Personalization “specificity” score** — average personalization_pct across approved drafts. v1.1 baseline target: ≥65%. v1.2 expectation with three new signals: ≥75%. If we don’t see the lift, the signals aren’t being woven in correctly.
 - **Prep-brief usage rate** — % of discovery calls where Sonia pulled the brief beforehand. Target: 90%+. Self-tracked in a Notion checklist.
+- **Book rate per sequence step (v1.8)** — primary conversion metric now visible on `/queue` engagement dashboard. Target: establish baseline in week 2, optimize cold + follow-up-1 buckets first (calendar-link bookings often skip reply).
+- **Cold connect rate (v1.8)** — % of cold-call dispositions marked Connected via `/cold-call`. Track alongside email reply rate — the sequence pairs both channels.
 
 Stage gates unchanged.
 
@@ -718,7 +849,7 @@ Stage gates unchanged.
 - No live two-way AI voice agent
 - No public-facing app, multi-tenant, or mobile app
 - No CRM other than HubSpot
-- No analytics dashboard beyond HubSpot + daily brief email
+- No analytics dashboard beyond HubSpot + daily brief email + `/queue` engagement panel (v1.7+)
 - No separate scraping/CRM microservice
 - **No BuiltWith paid API** (we’re doing tech-stack detection in-house via regex on already-fetched HTML)
 

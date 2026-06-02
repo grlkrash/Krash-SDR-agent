@@ -2,7 +2,7 @@
 
 **Version:** 1.3
 **For:** Sonia (operator) using Cursor
-**Companion files:** `.cursorrules` (Cursor reads automatically), `CURSOR_GUIDE.md` (operator manual)
+**Companion files:** `.cursorrules` (Cursor reads automatically), `CURSOR GUIDE - SDR agent v2.md` (operator manual), `PRD - SDR agent v2.md` (product contract)
 
 **Changes from v1.2:**
 
@@ -25,7 +25,7 @@
 1. Open Cursor in the repo. Verify it sees `.cursorrules` (ask “what rules are you following?”).
 2. Open Composer (Cmd/Ctrl+I).
 3. Copy ONE prompt block at a time. Paste. Wait for diff. Verify acceptance criteria. Commit. Move on.
-4. See CURSOR_GUIDE.md for troubleshooting.
+4. See `CURSOR GUIDE - SDR agent v2.md` for troubleshooting.
 
 ---
 
@@ -55,7 +55,7 @@ src/server.ts: minimal Express server. GET /health returns { ok: true, uptime: p
 .env.example with empty values, one per line:
 DATABASE_URL, ANTHROPIC_API_KEY, VOYAGE_API_KEY, GOOGLE_MAPS_API_KEY, SERPER_API_KEY, HUBSPOT_ACCESS_TOKEN, HUBSPOT_OWNER_ID, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_FROM, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID, QUEUE_PASSWORD, PUBLIC_URL, UNSUBSCRIBE_SECRET, BRIEF_RECIPIENT, SONIA_PHONE
 
-README.md: 4-line stub pointing to PRD.md, INSTRUCTIONS.md, CURSOR_GUIDE.md.
+README.md: 4-line stub pointing to PRD - SDR agent v2.md, INSTRUCTIONS- SDR agent v2.md, CURSOR GUIDE - SDR agent v2.md.
 
 Install:
 - runtime: express, prisma, @prisma/client, zod, dotenv
@@ -79,7 +79,7 @@ STOP. Do not create prisma/schema.prisma — that's the next prompt.
 ### Prompt 0.2 — Prisma schema (6 tables, locked)
 
 ```
-Create ONLY prisma/schema.prisma. Six models exactly as in PRD.md §8.
+Create ONLY prisma/schema.prisma. Six models exactly as in PRD - SDR agent v2.md §8.
 
 datasource db { provider = "postgresql"; url = env("DATABASE_URL"); extensions = [vector] }
 generator client { provider = "prisma-client-js"; previewFeatures = ["postgresqlExtensions"] }

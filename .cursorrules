@@ -1,0 +1,88 @@
+# Sobriety Select SDR Agent — Cursor rules
+
+Read **`PRD - SDR agent v2.md`** and **`INSTRUCTIONS- SDR agent v2.md`** in the repo root for full context. Operator manual: **`CURSOR GUIDE - SDR agent v2.md`**.
+
+## Core principles
+
+**Minimize code surface area.** One service, six database tables, no Redis, no queues, no microservices, no monorepo, no Docker Compose, no custom React UI. Re-read the PRD if you reach for any of those.
+
+**Each prompt is scoped.** When the user gives a prompt block from INSTRUCTIONS, do EXACTLY what it asks, then STOP. No related files, no drive-by refactors.
+
+**Acceptance criteria are the contract.** Every prompt ends with "Acceptance:" — verify before finishing.
+
+## Code style — DO
+
+- TypeScript strict (`strict: true`)
+- `async/await` — never `.then()` chains
+- `fetch` (Node 20) — never axios or node-fetch
+- Prisma for all DB access — raw SQL only for pgvector
+- Plain functions — not classes (except third-party SDK wrappers)
+- Named exports — never default exports
+- `zod` at trust boundaries
+- Template literals — never string `+` concatenation
+- `Number()`, `String()`, `Boolean()` for explicit conversion
+- Optional chaining `?.` and nullish coalescing `??`
+- `Map` / `Set` when appropriate; `for...of` over `.forEach()` for async
+- Early returns — avoid deep nesting
+- ~150 lines max per file
+
+## Code style — DON'T
+
+- `any` — use `unknown` and narrow
+- `as` assertions — only after `zod` parse or narrowing from `unknown`
+- `@ts-ignore` / `@ts-expect-error`
+- `var`; module-scope `function` declarations — use `const` arrow functions
+- CommonJS `require` — ESM `import` only
+- `process.exit()` — throw on fatal errors
+- `console.log` in production paths — structured JSON logger + AuditLog
+- `==` — always `===`
+- Magic numbers — named `const` at file top
+- Defensive try/catch around whole functions — catch only where you handle meaningfully
+- Comments that restate the code
+
+## Project constraints
+
+- **AI:** Anthropic Claude only (`claude-sonnet-4-5-20250929` generation; `claude-haiku-4-5-20251001` health checks)
+- **Embeddings:** Voyage AI (`voyage-3`, 1024-dim)
+- **CRM:** HubSpot only
+- **Email send:** Gmail API only
+- **Database:** Postgres + pgvector — six tables: Lead, Enrichment, Draft, Suppression, Score, KBChunk, AuditLog
+- **No Sequence table** — sequence state from Draft history
+- **No job queues** — Railway cron + `cronTick.ts` is enough
+- **UI:** Server-rendered HTML for `/queue` — no React
+
+## Database
+
+- `cuid()` IDs; Prisma `upsert` with natural unique keys
+- pgvector inserts via `$executeRawUnsafe` with `$N::vector` casts
+- Don't add tables or indexes without PRD update
+
+## Error handling
+
+- Errors propagate to cron entry points
+- External API calls use retry wrappers where idempotent (e.g. `hsRetry`)
+- AuditLog on: cron success/failure, API failures, drafts, approvals, sends
+- Never silently swallow errors
+
+## Claude API
+
+- JSON prompts: "Output ONLY valid JSON. No preamble, no markdown fences."
+- `temperature: 0` for extraction/evaluation; `0.7` for creative drafting
+- Prompt caching on reused system prompts and KB context
+
+## Prompts
+
+- Live in `src/prompts/` — one file per prompt
+- Export `*_SYSTEM` const + `buildUserPrompt(...)` — no Claude calls inside prompt files
+
+## Reply format
+
+1. Skip preamble — go straight to work
+2. List files created/edited
+3. End with: files changed, npm installs needed, non-obvious decisions, **Acceptance check:**
+4. If ambiguous, ask ONE question before coding
+5. STOP after completing the prompt scope
+
+## Push back on
+
+Redis, BullMQ, new tables, microservices, OpenAI, SendGrid, Salesforce, React UI — unless the user explicitly overrides the PRD.

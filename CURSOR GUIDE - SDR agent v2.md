@@ -1,20 +1,28 @@
-# CURSOR_GUIDE.md
+# CURSOR GUIDE — SDR Agent v2
 
 How to use Cursor effectively to build the Sobriety Select SDR Agent.
+
+**Repo docs (exact filenames):**
+
+| File | Purpose |
+| --- | --- |
+| `PRD - SDR agent v2.md` | Product contract — workflows, schema, cron, non-goals |
+| `INSTRUCTIONS- SDR agent v2.md` | Build prompts (one block per Cursor turn) |
+| `CURSOR GUIDE - SDR agent v2.md` | This file — operator workflow + troubleshooting |
 
 ---
 
 ## Setup (one time)
 
 1. **Clone or open the repo in Cursor.** The `.cursorrules` file at the repo root is read automatically on every prompt. You don’t need to paste rules manually.
-2. **Verify Cursor sees the rules:** open a new chat and ask “What rules are you operating under?” You should see references to PRD.md, the 6-table schema, no Redis/queues, etc. If not, restart Cursor.
+2. **Verify Cursor sees the rules:** open a new chat and ask “What rules are you operating under?” You should see references to `PRD - SDR agent v2.md`, the six-table schema, no Redis/queues, etc. If not, restart Cursor.
 3. **Use Claude Sonnet 4 as your Cursor model** for code generation. Cmd/Ctrl+I → click the model selector. The PRD prompts assume Sonnet-class quality.
 4. **Prefer Composer (Cmd/Ctrl+I)** over inline chat for any prompt that creates or modifies files. Composer can write multiple files in one shot and shows you a unified diff.
-5. **Open PRD.md and INSTRUCTIONS.md in tabs** — Cursor automatically includes open files in context.
+5. **Open `PRD - SDR agent v2.md` and `INSTRUCTIONS- SDR agent v2.md` in tabs** — Cursor automatically includes open files in context.
 
 ---
 
-## How to run a prompt from INSTRUCTIONS.md
+## How to run a prompt from INSTRUCTIONS- SDR agent v2.md
 
 Each numbered block (e.g., “Prompt 1.2”) is one Cursor turn.
 
@@ -102,7 +110,7 @@ The PRD is the contract. But it’s not sacred. Override is fine when:
 2. You learn something from week 1 that changes the design (e.g., reply rate is 5% not 15% — we need a different angle)
 3. Mark Beach gives you info that changes assumptions (e.g., pricing tiers shift)
 
-When you override, **update the PRD first**, then update INSTRUCTIONS, then change code. Code-first overrides drift the docs out of sync and your future self pays the cost.
+When you override, **update `PRD - SDR agent v2.md` first**, then **`INSTRUCTIONS- SDR agent v2.md`**, then change code. Code-first overrides drift the docs out of sync and your future self pays the cost.
 
 ---
 
