@@ -1,11 +1,18 @@
 # PRD — Sobriety Select SDR Agent (SSA)
 
-**Version:** 1.8
+**Version:** 1.9
 **Owner:** Sonia Gibbs (Independent Contractor, Sobriety Select)
 **Engagement Start:** May 27, 2026
-**Last Updated:** June 1, 2026
+**Last Updated:** June 2, 2026
 
-**Changes from v1.7 (June 1, 2026):**
+**Changes from v1.8 (June 2, 2026):**
+
+- **Cold draft redraft commands (§9.4, §9.14).** Operator scripts to upgrade pending cold drafts after prompt changes without regenerating the full queue: `npm run redraft:stale-cold` (dry-run) and `npm run redraft:stale-cold -- --apply` (reject + redraft only drafts missing the free-listing hook). Full-batch variant: `APPLY=1 npx tsx src/scripts/_tmpRedraftPending.ts` (optional `LIMIT=N`). Batch migrations set `DRAFT_COLD_BATCH_REDRAFT=1` to bypass the per-lead reject cap.
+- **Free-listing entry hook gate (§9.4).** `draftCold.ts` now requires `hasFreeListingEntryHook(body)` before saving — explicit "free profile/listing" **or** pre-built basic profile + claim/verify/live language. Missing hook triggers the same personalization retry as quality failures. Detection lives in `coldEmailQuality.ts`.
+- **Leak scan market-context fix (§9.4).** `leakScan.ts` strips industry market-pressure sentences (paid-search inflation, "channels getting pricier") from the scan copy so legitimate census-framing with "cost" does not false-positive as SS-pricing leaks. Dollar amounts and Sobriety Select fee language still block.
+- **Smoke-test detection expanded (§9.5).** `isSmokeTestLeadRecord()` in `smokeTestLead.ts` centralizes exclusion: `SMOKE_TEST_LEAD_ID`, `SMOKE ` name prefix, or `sourceMeta.smokeLane`. Auto-retires open call sequences for smoke leads on queue load.
+
+**Changes from v1.8 (June 1, 2026):**
 
 - **Voicemail paused (operational state, §9.9).** `dropVoicemails` and `runSecondCalls` are **disabled** in `cronSchedule.ts` until counsel re-approves `VM_AI_AUTO_SEND`. Code is preserved; re-enable by setting `enabled: true` on both jobs. While paused, sent **reactivations** route to a **manual call lane** (§9.10) instead of AI vm drops.
 - **Cold-call cadence (§9.6).** After a cold email sends to a lead with `phoneE164`, SSA opens a **3-touch human call sequence** on business days **2, 5, and 9** (`flagColdForCall` → `coldCallFollowups` 8:10 AM ET). Operator queue at **`/cold-call`** with one-click disposition (Connected / No answer / Done); each touch logs a HubSpot call engagement. Sequence retires on reply, meeting booked, or BD-9 window expiry.
@@ -315,6 +322,9 @@ sobriety-select-sdr/
 │   ├── middleware/
 │   │   └── queueAuth.ts
 │   ├── scripts/
+│   │   ├── redraftStaleColdPending.ts   # v1.9: npm run redraft:stale-cold
+│   │   ├── _tmpRedraftPending.ts        # v1.9: full pending-cold batch redraft
+│   │   └── _tmpDraftOne.ts              # dev: single-lead cold draft + leak scan
 │   └── server.ts
 └── tests/prompts/
 ```
@@ -515,11 +525,12 @@ Paid tiers belong on the **call**, never in the cold email. The word "free" stay
 | Body length | ≥120 words (target 130–165) |
 | SS identity | ≥2 markers (Sobriety Select, map-forward, profiles, etc.) |
 | Free-listing guardrails | No outcome guarantees ("fill your beds", "guaranteed leads"); no catastrophized invisibility ("nobody can find you", "invisible") |
+| Free-listing entry hook | Body must offer to claim/verify a free or pre-built basic Sobriety Select profile (`hasFreeListingEntryHook`) — premium hiring angles may use "basic profile" without the word "free" |
 | Subject words | ≤6 words, ≤50 chars |
 | Subject token | Must include a facility-name token (≥4 chars) |
 | Subject spam | No `!!`, ALL CAPS spam, banned words (`guaranteed`, `revolutionary`, etc.), no `?` or `!` |
 
-Failed quality + low personalization → one retry with explicit fix instructions. Still failing → skip + `AuditLog 'draftCold.quality-failed'`.
+Failed quality, missing free-listing hook, or low personalization → one retry with explicit fix instructions. Still failing → skip + `AuditLog 'draftCold.quality-rejected'` or `'draftCold.leak-detected'`.
 
 Sales hooks unlocked:
 
@@ -529,9 +540,32 @@ Sales hooks unlocked:
 
 **Reject-feedback loop (v1.2 addition).** When `draftColdBatch` re-drafts a lead whose only prior cold drafts are `status='rejected'`, `draftCold.ts` looks up the most recent rejected draft's `rejectReason` and appends it as a single trailing paragraph to the user message (the cached system prompt is unchanged). Cap is 240 chars; empty/null reasons are skipped so the marginal token cost is zero when Sonia hits Reject without typing. Paused drafts are excluded — only `status='rejected'` rows count. Use of the feedback is logged via `AuditLog 'draftCold.reject-feedback-used'` with `{ previousDraftId, reasonChars }` so we can verify the loop is firing without storing the reason text twice.
 
-**Reject-cap (v1.2 addition).** `MAX_REJECTS_PER_LEAD = 3`. Once a lead has accumulated 3 `status='rejected'` cold drafts, `draftCold.ts` skips draft generation entirely and writes `AuditLog 'draftCold.skipped-too-many-rejects'`. The model isn't going to crack the lead with more attempts; further drafts wait until the operator either kills the lead (see §9.5) or restores a rejected draft via `/undo`. This bounds Anthropic spend on un-draftable leads (otherwise a single broken lead would re-enter the batch every day forever).
+**Reject-cap (v1.2 addition, v1.9 batch bypass).** `MAX_REJECTS_PER_LEAD = 3`. Once a lead has accumulated 3 `status='rejected'` cold drafts, `draftCold.ts` skips draft generation entirely and writes `AuditLog 'draftCold.skipped-too-many-rejects'`. The model isn't going to crack the lead with more attempts; further drafts wait until the operator either kills the lead (see §9.5) or restores a rejected draft via `/undo`. **Exception:** operator-initiated prompt migrations set `DRAFT_COLD_BATCH_REDRAFT=1` (automatic in `redraftStaleColdPending.ts` and `_tmpRedraftPending.ts`) to bypass the cap for one batch regen.
 
-**Leak guard (v1.2 addition).** After every `generate()` call (both first attempt and personalization-retry), the body is run through `src/outreach/leakScan.ts` against four regex patterns: dollar amounts (`/\$\s?\d/`), pricing words (`price|pricing|cost|costs|fee|fees|dollars?|USD`), per-year/month framings, and capitalized tier names (`Claimed|Select|Premium`). The facility name is passed as `ignoreSubstrings` so a center literally named "Premium Recovery" doesn't false-positive. Any hit → skip the draft, write `AuditLog 'draftCold.leak-detected'` with `{ attempt, hits }`. No automatic retry on a leak — a leak indicates a deeper failure of the COLD_EMAIL_SYSTEM rules and is worth surfacing rather than papering over. The same `scanLeaks(...)` helper is used by the `_tmpDraftOne.ts` and `_tmpDraftRejected.ts` dev scripts so production and dev share one source of truth for the pattern set.
+**Leak guard (v1.2 addition, v1.9 market-context).** After every `generate()` call (both first attempt and personalization-retry), the body is run through `src/outreach/leakScan.ts` against four regex patterns: dollar amounts (`/\$\s?\d/`), pricing words (`price|pricing|cost|costs|fee|fees|dollars?|USD`), per-year/month framings, and capitalized tier names (`Claimed|Select|Premium`). The facility name is passed as `ignoreSubstrings` so a center literally named "Premium Recovery" doesn't false-positive. **v1.9:** sentences with market-pressure framing (paid search, keyword auctions, "channels getting pricier") are stripped from the scan copy before matching — industry YoY stats and census-framing "cost" language are allowed; SS dollar amounts and "Sobriety Select" + fee language in the same sentence still block. Any hit → skip the draft, write `AuditLog 'draftCold.leak-detected'` with `{ attempt, hits }`. No automatic retry on a leak — a leak indicates a deeper failure of the COLD_EMAIL_SYSTEM rules and is worth surfacing rather than papering over. The same `scanLeaks(...)` helper is used by the `_tmpDraftOne.ts` and `_tmpDraftRejected.ts` dev scripts so production and dev share one source of truth for the pattern set.
+
+**Prompt migration / redraft (v1.9).** When cold-email strategy changes (e.g. free-listing angle rollout), upgrade pending drafts without regenerating the entire queue:
+
+| Command | Purpose |
+| --- | --- |
+| `npm run redraft:stale-cold` | **Dry-run** — list pending `kind='cold'` drafts missing `hasFreeListingEntryHook` |
+| `npm run redraft:stale-cold -- --apply` | **Apply** — reject stale pending colds + regenerate only those leads (cheapest path) |
+| `APPLY=1 npx tsx src/scripts/_tmpRedraftPending.ts` | Reject **all** pending colds missing the hook + redraft (skips drafts that already have the hook) |
+| `APPLY=1 LIMIT=10 npx tsx src/scripts/_tmpRedraftPending.ts` | Same, first 10 stale targets only (spot-check before full batch) |
+| `DRAFT_COLD_BATCH_REDRAFT=1` | Env var — bypass `MAX_REJECTS_PER_LEAD` during operator batch migrations (set automatically by redraft scripts) |
+| `CONCURRENCY=2 PACING_MS=1200` | Optional tuning for redraft throughput |
+
+Rejects use `rejectReason='batch-redraft: free-listing prompt upgrade'`. Audits: `draft.batch-redraft-reject`, `draft.batch-redraft.complete`. After a migration, hard-refresh `/queue` (stats cache is 5 minutes).
+
+**Single-lead retry (dev / orphan recovery):**
+
+| Command | Purpose |
+| --- | --- |
+| `LEAD_ID={id} DRAFT_COLD_BATCH_REDRAFT=1 npx tsx src/scripts/_tmpDraftOne.ts` | Draft one cold email for a named lead (prints body + leak scan) |
+| `LEAD_NAME="Aspire" npx tsx src/scripts/_tmpDraftOne.ts` | Same, lookup by partial facility name |
+| `LEAD_ID={id} DRAFT_COLD_BATCH_REDRAFT=1 npx tsx -e "import { draftColdEmail } from './src/outreach/draftCold.js'; …"` | Direct `draftColdEmail(leadId)` when batch redraft skipped a lead (quality/leak failure) |
+
+Requires lead to have `Enrichment` on file — leads without enrichment cannot cold-draft.
 
 **Do-not-contact respect.** `draftColdBatch` filters `doNotContact: false` in the candidate query, and `draftCold.ts` re-checks `lead.doNotContact` as defense in depth (logs `draftCold.do-not-contact` and returns null if true). This means once §9.5's Kill lead button flips the flag, no further drafts are generated regardless of suppression-table state.
 
@@ -591,7 +625,7 @@ Only buckets with at least one send appear in the table — the panel stays comp
 
 Clicking a badge opens **`GET /queue/lead-engagement/:leadId`** — a server-rendered page listing every sent email for that lead (type, date, opened?, replied?, booked?) plus the suggested approach text. Honors the same `?period=` filter as the dashboard. Same auth cookie as `/queue` (`queueAuth`).
 
-**Smoke-test exclusion (v1.8).** Leads matching `SMOKE_TEST_LEAD_ID`, name prefix `SMOKE `, or `sourceMeta.smokeLane` are excluded from engagement stats, cold-call queue, renewal/reactivation call queues, and meeting attribution display. Operator inbox validation only.
+**Smoke-test exclusion (v1.8, expanded v1.9).** Leads matching `isSmokeTestLeadRecord()` — `SMOKE_TEST_LEAD_ID`, name prefix `SMOKE `, or `sourceMeta.smokeLane` — are excluded from engagement stats and production call queues (cold, renewal, reactivation). Open call sequences for smoke leads are auto-retired on queue load. Operator inbox validation only. Seed lanes: `npx tsx src/scripts/seedSmokeTestLanes.ts` (see §9.14).
 
 **JSON API (v1.7+, v1.8 range).** For scripts or future UI:
 
@@ -780,6 +814,58 @@ Roaya Tyson          → 3 facilities
 **Known precision caveat.** The fallback `findFacilityLeadership` query occasionally returns a real LinkedIn human whose profile mentions the facility name but who actually works elsewhere (observed: a Coral Sober Living lead tagged with someone from Lighthouse Recovery). The view is informational, so a human reviews; once Phase 2 is on, that precision tradeoff is what gates whether to enable suppression by default vs. require approval.
 
 **Why it’s not in §6 “No new tables” conflict.** The view is not a table — it’s a query expressed as DDL. It can be `DROP VIEW`-ed at any time without data loss. If Phase 3 ever happens it adds a column, not a table.
+
+-----
+
+### 9.14 Operator commands (maintenance & smoke test)
+
+One-off scripts live in `src/scripts/`. All require `DATABASE_URL` (local or `railway run …`). Prefer **`npm run`** aliases where listed.
+
+**Cold draft migration (v1.9 — see §9.4 for detail):**
+
+```bash
+npm run redraft:stale-cold                    # dry-run: pending colds missing free-listing hook
+npm run redraft:stale-cold -- --apply         # reject + redraft stale only (cheapest)
+APPLY=1 npx tsx src/scripts/_tmpRedraftPending.ts           # full stale batch
+APPLY=1 LIMIT=10 npx tsx src/scripts/_tmpRedraftPending.ts  # sample 10 first
+LEAD_ID=… DRAFT_COLD_BATCH_REDRAFT=1 npx tsx src/scripts/_tmpDraftOne.ts  # single-lead retry
+```
+
+**Exclusions & data:**
+
+```bash
+npm run exclusions:import -- --incoming       # import CSVs from data/exclusions/incoming/
+npm run exclusions:sync-directory             # daily directory API sync (manual run)
+npm run leads:export                          # export lead CSV
+```
+
+**Smoke-test lanes (operator inbox validation — never reaches real prospects):**
+
+```bash
+npx tsx src/scripts/seedSmokeTestLanes.ts     # seed cold / renewal / reactivation / reply lanes
+npx tsx src/scripts/seedSmokeTestPostSaleQueue.ts  # renewal + reactivation fixtures for one lead
+# Set SMOKE_TEST_LEAD_ID on web + cron for Twilio VM bypass when vm re-enabled
+```
+
+**Compliance exports:**
+
+```bash
+npm run compliance:matrix                     # voicemail state matrix CSV
+npm run compliance:briefing                   # counsel briefing HTML
+```
+
+**Cron (manual one-shot):**
+
+```bash
+npm run cron:one -- draftColdBatch            # run one named cron job locally
+railway run npm run cron:one -- sendDailyBrief
+```
+
+**Knowledge base:**
+
+```bash
+npm run kb:reindex                            # re-embed kb/ into pgvector
+```
 
 -----
 
