@@ -11,6 +11,7 @@ import {
 import {
   assessColdDraftQuality,
   buildDraftQualityRetryFeedback,
+  hasFreeListingEntryHook,
   type SubjectProspectContext,
 } from './coldEmailQuality.js';
 import { isExcludedFromCold } from '../shared/exclusion.js';
@@ -108,15 +109,21 @@ const evaluate = async (body: string, prospectFacts: unknown): Promise<EvalOutpu
   };
 };
 
-const needsRetry = (quality: ReturnType<typeof assessColdDraftQuality>, evalResult: EvalOutput): boolean =>
+const needsRetry = (
+  quality: ReturnType<typeof assessColdDraftQuality>,
+  evalResult: EvalOutput,
+  body: string,
+): boolean =>
   !quality.ok
   || evalResult.pct < RETRY_TRIGGER_PCT
   || !evalResult.hasSsProduct
-  || !evalResult.hasMarketPain;
+  || !evalResult.hasMarketPain
+  || !hasFreeListingEntryHook(body);
 
 const buildRetryFeedback = (
   quality: ReturnType<typeof assessColdDraftQuality>,
   evalResult: EvalOutput,
+  body: string,
 ): string => {
   const parts: string[] = [];
 
@@ -135,8 +142,13 @@ const buildRetryFeedback = (
       'Missing SS IDENTITY paragraph: explain who Sobriety Select is (map-forward directory, region + insurance discovery, rich profiles, complements existing marketing) in 2–3 sentences before the CTA.',
     );
   }
+  if (!hasFreeListingEntryHook(body)) {
+    parts.push(
+      'Include the FREE-LISTING ENTRY OFFER: Sobriety Select has pre-built a basic profile from public information — offer to get it claimed, verified, and live (no card, no obligation). Use "free" in the body (never in the subject). Paid tiers are for the call only.',
+    );
+  }
   if (!quality.ok) {
-    parts.push(buildDraftQualityRetryFeedback(quality));
+    parts.push(buildDraftQualityRetryFeedback(quality, body));
   }
 
   parts.push('Output the same JSON schema. Target 130–165 words; subject ≤6 words with a prospect token.');
@@ -171,7 +183,8 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
   const rejectedCount = await prisma.draft.count({
     where: { leadId, kind: 'cold', status: 'rejected' },
   });
-  if (rejectedCount >= MAX_REJECTS_PER_LEAD) {
+  const batchRedraft = process.env.DRAFT_COLD_BATCH_REDRAFT === '1';
+  if (rejectedCount >= MAX_REJECTS_PER_LEAD && !batchRedraft) {
     await audit('draftCold.skipped-too-many-rejects', leadId, {
       rejectedCount,
       capacity: MAX_REJECTS_PER_LEAD,
@@ -221,7 +234,7 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
   let quality = assessColdDraftQuality(gen.subject, gen.body, subjCtx);
   let evalResult = await evaluate(gen.body, prospectFacts);
 
-  if (needsRetry(quality, evalResult)) {
+  if (needsRetry(quality, evalResult, gen.body)) {
     const firstAttempt = gen;
     const firstSnapshot: AttemptSnapshot = { gen, quality, evalResult };
 
@@ -237,7 +250,7 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
     gen = await generate([
       { role: 'user', content: baseUser },
       { role: 'assistant', content: JSON.stringify(firstAttempt) },
-      { role: 'user', content: buildRetryFeedback(quality, evalResult) },
+      { role: 'user', content: buildRetryFeedback(quality, evalResult, gen.body) },
     ]);
 
     const retryLeaks = scanLeaks(gen.body, [leadOnly.name]);
@@ -253,7 +266,8 @@ export const draftColdEmail = async (leadId: string): Promise<string | null> => 
       evalResult.pct < ACCEPT_FLOOR_PCT
       || !quality.ok
       || !evalResult.hasSsProduct
-      || !evalResult.hasMarketPain;
+      || !evalResult.hasMarketPain
+      || !hasFreeListingEntryHook(gen.body);
 
     if (retryFailed) {
       await audit('draftCold.quality-rejected', leadId, {

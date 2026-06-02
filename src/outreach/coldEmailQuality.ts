@@ -83,6 +83,14 @@ const OVERPROMISE_RX =
 const OVERSELL_INVISIBILITY_RX =
   /\b(?:invisible|no one can find you|nobody can find you|families can['’]?t find you|can['’]?t be found|don['’]?t exist online|do not exist online|zero visibility|completely (?:missing|invisible)|impossible to find|off the map)\b/i;
 
+// Matches the cold-email free-listing entry offer (explicit "free" OR pre-built
+// basic profile + claim/live — premium hiring angles often omit the word "free").
+export const FREE_LISTING_ENTRY_HOOK_RX =
+  /(?:\bfree\b[^\n]{0,72}\b(?:profile|listing|basic)\b)|(?:\bwe['']ve already (?:built|prepared)\b[^\n]{0,56}\b(?:basic )?(?:profile|listing)\b)|(?:\bbasic (?:profile|listing)\b[^\n]{0,96}\b(?:claim|claimed|verif|live|public information|from public))/i;
+
+export const hasFreeListingEntryHook = (body: string): boolean =>
+  FREE_LISTING_ENTRY_HOOK_RX.test(body.trim());
+
 const facilityTokens = (name: string): string[] =>
   name
     .toLowerCase()
@@ -182,7 +190,10 @@ export const buildSubjectRetryFeedback = (subject: SubjectQualityResult): string
   return parts.join(' ');
 };
 
-export const buildQualityRetryFeedback = (quality: ColdEmailQualityResult): string => {
+export const buildQualityRetryFeedback = (
+  quality: ColdEmailQualityResult,
+  body: string,
+): string => {
   const parts: string[] = [];
 
   if (quality.issues.includes('too-short')) {
@@ -205,13 +216,15 @@ export const buildQualityRetryFeedback = (quality: ColdEmailQualityResult): stri
       'Do not catastrophize their visibility. Most centers already rank for their own name. Cut "invisible", "no one/families can\'t find you", "don\'t exist online", "zero visibility". Describe the gap precisely and locally ("families searching {city} by insurance may not see you on map-forward directories yet").',
     );
   }
-
   return parts.join(' ');
 };
 
-export const buildDraftQualityRetryFeedback = (draft: ColdDraftQualityResult): string => {
+export const buildDraftQualityRetryFeedback = (
+  draft: ColdDraftQualityResult,
+  body: string,
+): string => {
   const parts: string[] = [];
-  const bodyFb = buildQualityRetryFeedback(draft.body);
+  const bodyFb = buildQualityRetryFeedback(draft.body, body);
   const subjectFb = buildSubjectRetryFeedback(draft.subject);
   if (bodyFb !== '') parts.push(bodyFb);
   if (subjectFb !== '') parts.push(subjectFb);

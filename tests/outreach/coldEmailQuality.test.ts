@@ -5,6 +5,7 @@ import {
   assessColdDraftQuality,
   bodyWordCount,
   COLD_BODY_MIN_WORDS,
+  hasFreeListingEntryHook,
   SUBJECT_MAX_CHARS,
   SUBJECT_MAX_WORDS,
 } from '../../src/outreach/coldEmailQuality.js';
@@ -117,5 +118,25 @@ describe('coldEmailQuality — subject', () => {
       ctx,
     );
     expect(draft.ok).toBe(true);
+  });
+});
+
+describe('hasFreeListingEntryHook', () => {
+  it('accepts explicit free profile language', () => {
+    expect(hasFreeListingEntryHook(
+      'We can get your free basic profile claimed and live in Lakeland.',
+    )).toBe(true);
+  });
+
+  it('accepts pre-built basic profile without the word free', () => {
+    expect(hasFreeListingEntryHook(
+      'We have already built a basic profile from public information — happy to get it verified and live.',
+    )).toBe(true);
+  });
+
+  it('rejects census-only cold copy with no listing offer', () => {
+    expect(hasFreeListingEntryHook(
+      'Families in Lakeland are reaching competitors. Grab a time here: https://example.com',
+    )).toBe(false);
   });
 });
