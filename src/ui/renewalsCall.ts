@@ -48,9 +48,7 @@ const pageStyles = `
 
 const renderRow = (r: Awaited<ReturnType<typeof buildRenewalCallRows>>[number]): string => {
   const owner = r.ownerName ?? '—';
-  const prepBrief = r.hubspotCompanyId === null
-    ? ''
-    : ` · <a href="/prep-brief/lookup?companyId=${encodeURIComponent(r.hubspotCompanyId)}" target="_blank">Prep brief</a>`;
+  const prepBrief = ` · <a href="/prep-brief/lead/${encodeURIComponent(r.leadId)}" target="_blank">Prep brief</a>`;
   const nextTouch = r.nextTouchNumber === null
     ? `${String(r.touchesDone)}/${String(RENEWAL_MAX_TOUCHES)} logged`
     : `Touch ${String(r.nextTouchNumber)}/${String(RENEWAL_MAX_TOUCHES)}`;

@@ -244,9 +244,8 @@ const renderSiteLink = (lead: Lead): string => {
   return ` · <a href="${escapeHtml(lead.website)}" target="_blank" rel="noopener">site</a>`;
 };
 
-// Cookie-based auth (per Security Prompt S.1) — no ?pw= on this URL. The
-// /prep-brief/lookup handler resolves the company → first associated deal
-// and redirects to /prep-brief/{dealId}.
+// Cookie-based auth (per Security Prompt S.1) — no ?pw= on this URL.
+// Prep brief links use /prep-brief/lead/{leadId} (auto-creates HubSpot deal).
 const renderPhoneLine = (lead: Lead, kind: string): string => {
   if (!POST_SALE_KINDS.has(kind) && kind !== 'noshow') return '';
   if (lead.phoneE164 === null) {
@@ -321,8 +320,7 @@ const renderLaneFilters = (
 };
 
 const renderPrepBriefLink = (lead: Lead): string => {
-  if (lead.hubspotCompanyId === null) return '';
-  const href = `/prep-brief/lookup?companyId=${encodeURIComponent(lead.hubspotCompanyId)}`;
+  const href = `/prep-brief/lead/${encodeURIComponent(lead.id)}`;
   return `<a href="${href}" target="_blank" style="font-size:12px;color:#666;text-decoration:none;margin-left:8px">📋 Prep Brief</a>`;
 };
 

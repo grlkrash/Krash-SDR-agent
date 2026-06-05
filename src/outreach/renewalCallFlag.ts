@@ -141,6 +141,7 @@ const loadTasksCreated = async (draftId: string): Promise<Set<number>> => {
 
 export type RenewalCallRow = {
   draftId: string;
+  leadId: string;
   facility: string;
   city: string;
   state: string;
@@ -202,6 +203,7 @@ export const buildRenewalCallRows = async (opts?: {
     const next = nextPendingTouch(d.sentAt, done, now);
     rows.push({
       draftId: d.id,
+      leadId: lead.id,
       facility: lead.name,
       city: lead.city,
       state: lead.state,

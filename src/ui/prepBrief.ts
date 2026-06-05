@@ -1,35 +1,21 @@
 // Prep-brief router (Prompt 9.4).
 //
-// Two routes, both behind queueAuth:
-//
-//   GET /prep-brief/lookup?companyId=...
-//     Resolves a HubSpot company → first associated deal and 302s to
-//     /prep-brief/{dealId}. The approval-queue card links here so Sonia
-//     can open a brief without first looking up the dealId.
-//
-//   GET /prep-brief/:dealId
-//     Runs generatePrepBriefWithLead, then either:
-//       - ?send=email  → ships the markdown to BRIEF_RECIPIENT via Gmail
-//                        and renders a small confirmation page, or
-//       - default      → renders a print-friendly HTML page with the
-//                        markdown converted inline (no deps — see
-//                        renderMarkdown below).
-//
-// Auth: cookie-based per Security Prompt S.1 — queueAuth refreshes the qpw
-// cookie on every successful auth, so a fresh tab opened from the queue
-// card works without a ?pw= round trip.
-//
-// Association API: HubSpot's v3 associationsApi was removed in
-// @hubspot/api-client v13.5.0, so we use hs.crm.associations.v4.basicApi
-// (same fix Phase 4.3 applied to the company↔contact write path). The
-// outreach module does the rest of the v4 fetches.
+// Primary route: GET /prep-brief/lead/:leadId — DB-first; auto-creates a
+// HubSpot deal when none exists. Legacy routes:
+//   GET /prep-brief/lookup?companyId=... → resolves lead, redirects to lead route
+//   GET /prep-brief/:dealId → deal-id entry (still supported)
 
 import express from 'express';
-import { hs, hsRetry } from '../shared/hubspot.js';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
 import { queueAuth } from '../middleware/queueAuth.js';
-import { generatePrepBriefWithLead } from '../outreach/prepBrief.js';
+import { generatePrepBriefForLead, generatePrepBriefWithLead } from '../outreach/prepBrief.js';
 import { sendEmail } from '../shared/gmail.js';
 import { markdownToDocumentHtml } from '../shared/markdownHtml.js';
+
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
+});
 
 const PAGE_STYLE =
   "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:80px auto;padding:24px;text-align:center;color:#111;";
@@ -43,46 +29,48 @@ const escapeHtml = (s: string): string =>
     return '&#39;';
   });
 
-const renderMissingCompanyId = (): string => `<!doctype html>
+const renderMissingParam = (param: string): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Missing companyId</title>
+<title>Missing ${escapeHtml(param)}</title>
 </head>
 <body style="${PAGE_STYLE}">
-  <h1 style="font-size:18px;margin:0 0 12px;">Missing companyId.</h1>
+  <h1 style="font-size:18px;margin:0 0 12px;">Missing ${escapeHtml(param)}.</h1>
   <p style="color:#374151;font-size:14px;line-height:1.5;">
     Open this page from the approval queue's Prep Brief link.
   </p>
 </body>
 </html>`;
 
-const renderNoDeal = (companyId: string): string => `<!doctype html>
+const renderNoLead = (companyId: string): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>No HubSpot deal</title>
+<title>No synced lead</title>
 </head>
 <body style="${PAGE_STYLE}">
-  <h1 style="font-size:18px;margin:0 0 12px;">No HubSpot deal found for this company yet.</h1>
+  <h1 style="font-size:18px;margin:0 0 12px;">No synced lead for this HubSpot company.</h1>
   <p style="color:#374151;font-size:14px;line-height:1.5;">
-    Create a deal in HubSpot first, then try again.
+    Run pipeline enrich + hubspot sync for this facility first.
   </p>
   <p style="color:#9ca3af;font-size:12px;margin-top:24px;">Company ID: ${escapeHtml(companyId)}</p>
 </body>
 </html>`;
 
-const readCompanyId = (req: express.Request): string | null => {
-  const raw = req.query.companyId;
+const readQueryString = (req: express.Request, key: string): string | null => {
+  const raw = req.query[key];
   if (typeof raw !== 'string' || raw.trim() === '') return null;
   return raw.trim();
 };
 
-// Print-friendly styling. Sonia opens this 5 minutes before a call — small
-// typography, generous line-height, narrow column. Print rules strip the
-// fixed max-width so a paper printout uses the full page.
+const readRouteParam = (raw: string | string[] | undefined): string => {
+  if (typeof raw !== 'string') return '';
+  return raw.trim();
+};
+
 const BRIEF_PAGE_CSS = `
   :root { color-scheme: light; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; background: #fafafa; margin: 0; padding: 32px 16px; }
@@ -108,10 +96,15 @@ const BRIEF_PAGE_CSS = `
 `;
 
 const renderBriefPage = (
-  dealId: string,
+  leadId: string,
   leadName: string,
+  dealId: string | null,
   markdown: string,
-): string => `<!doctype html>
+): string => {
+  const dealMeta = dealId === null
+    ? `Lead ${escapeHtml(leadId)}`
+    : `Deal ${escapeHtml(dealId)}`;
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -121,12 +114,13 @@ const renderBriefPage = (
 </head>
 <body>
   <div class="meta">
-    <span>Deal ${escapeHtml(dealId)}</span>
+    <span>${dealMeta}</span>
     <span><a href="?send=email">📧 Email to me</a> &middot; <a href="javascript:window.print()">🖨 Print</a></span>
   </div>
   <article class="brief">${markdownToDocumentHtml(markdown)}</article>
 </body>
 </html>`;
+};
 
 const renderEmailSent = (
   recipient: string,
@@ -162,44 +156,20 @@ const renderError = (title: string, detail: string): string => `<!doctype html>
 </body>
 </html>`;
 
-export const prepBriefRouter = express.Router();
-
-prepBriefRouter.get('/prep-brief/lookup', queueAuth, async (req, res) => {
-  const companyId = readCompanyId(req);
-  if (companyId === null) {
-    res.status(400).type('html').send(renderMissingCompanyId());
-    return;
-  }
-  const page = await hsRetry(() =>
-    hs.crm.associations.v4.basicApi.getPage('companies', companyId, 'deals'),
-  );
-  const dealId = page.results[0]?.toObjectId ?? null;
-  if (dealId === null) {
-    res.status(404).type('html').send(renderNoDeal(companyId));
-    return;
-  }
-  res.redirect(302, `/prep-brief/${encodeURIComponent(dealId)}`);
-});
-
-prepBriefRouter.get('/prep-brief/:dealId', queueAuth, async (req, res) => {
-  // Express 5 types route params as `string | string[]` to accommodate the
-  // optional repeating-segment syntax. Our route uses a single segment, so
-  // we narrow defensively and reject anything that arrives as an array.
-  const rawDealId = req.params.dealId;
-  const dealId = typeof rawDealId === 'string' ? rawDealId.trim() : '';
-  if (dealId === '') {
-    res.status(400).type('html').send(renderError('Missing dealId', 'Provide a HubSpot deal id in the URL.'));
-    return;
-  }
+const deliverBrief = async (
+  req: express.Request,
+  res: express.Response,
+  generate: () => Promise<{ markdown: string; leadName: string; leadId: string; dealId: string | null }>,
+): Promise<void> => {
   let result;
   try {
-    result = await generatePrepBriefWithLead(dealId);
+    result = await generate();
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     res.status(500).type('html').send(renderError('Could not generate prep brief', detail));
     return;
   }
-  const { markdown, leadName } = result;
+  const { markdown, leadName, leadId, dealId } = result;
 
   if (req.query.send === 'email') {
     const recipient = process.env.BRIEF_RECIPIENT ?? '';
@@ -220,5 +190,42 @@ prepBriefRouter.get('/prep-brief/:dealId', queueAuth, async (req, res) => {
     return;
   }
 
-  res.type('html').send(renderBriefPage(dealId, leadName, markdown));
+  res.type('html').send(renderBriefPage(leadId, leadName, dealId, markdown));
+};
+
+export const prepBriefRouter = express.Router();
+
+prepBriefRouter.get('/prep-brief/lookup', queueAuth, async (req, res) => {
+  const companyId = readQueryString(req, 'companyId');
+  if (companyId === null) {
+    res.status(400).type('html').send(renderMissingParam('companyId'));
+    return;
+  }
+  const lead = await prisma.lead.findFirst({
+    where: { hubspotCompanyId: companyId },
+    select: { id: true },
+  });
+  if (lead === null) {
+    res.status(404).type('html').send(renderNoLead(companyId));
+    return;
+  }
+  res.redirect(302, `/prep-brief/lead/${encodeURIComponent(lead.id)}`);
+});
+
+prepBriefRouter.get('/prep-brief/lead/:leadId', queueAuth, async (req, res) => {
+  const leadId = readRouteParam(req.params.leadId);
+  if (leadId === '') {
+    res.status(400).type('html').send(renderMissingParam('leadId'));
+    return;
+  }
+  await deliverBrief(req, res, () => generatePrepBriefForLead(leadId));
+});
+
+prepBriefRouter.get('/prep-brief/:dealId', queueAuth, async (req, res) => {
+  const dealId = readRouteParam(req.params.dealId);
+  if (dealId === '' || dealId === 'lead' || dealId === 'lookup') {
+    res.status(400).type('html').send(renderError('Missing dealId', 'Provide a HubSpot deal id in the URL.'));
+    return;
+  }
+  await deliverBrief(req, res, () => generatePrepBriefWithLead(dealId));
 });

@@ -307,6 +307,7 @@ export const logColdCallTouch = async (opts: {
 
 export type ColdCallRow = {
   draftId: string;
+  leadId: string;
   facility: string;
   city: string;
   state: string;
@@ -416,6 +417,7 @@ export const buildColdCallRows = async (opts?: {
 
     rows.push({
       draftId: d.id,
+      leadId: lead.id,
       facility: lead.name,
       city: lead.city,
       state: lead.state,

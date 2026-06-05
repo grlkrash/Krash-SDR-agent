@@ -54,9 +54,7 @@ const pageStyles = `
 
 const renderRow = (r: Awaited<ReturnType<typeof buildColdCallRows>>[number]): string => {
   const owner = r.ownerName ?? '—';
-  const prepBrief = r.hubspotCompanyId === null
-    ? ''
-    : ` · <a href="/prep-brief/lookup?companyId=${encodeURIComponent(r.hubspotCompanyId)}" target="_blank">Prep brief</a>`;
+  const prepBrief = ` · <a href="/prep-brief/lead/${encodeURIComponent(r.leadId)}" target="_blank">Prep brief</a>`;
   const touch = r.nextTouchNumber === null
     ? `${String(r.touchesDone)}/${String(COLD_CALL_MAX_TOUCHES)} logged`
     : `Touch ${String(r.nextTouchNumber)}/${String(COLD_CALL_MAX_TOUCHES)}`;
