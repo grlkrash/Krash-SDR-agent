@@ -4,6 +4,7 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import { draftColdEmail } from '../outreach/draftCold.js';
+import { isReadyForColdEmailDraft } from '../outreach/outboundSequence.js';
 import { isExcludedFromCold } from '../shared/exclusion.js';
 import { guessEmail } from '../shared/guessEmail.js';
 
@@ -47,6 +48,7 @@ try {
       ?? guessEmail(lead.enrichment.ownerName, lead.website);
     if (targetEmail === null) continue;
     if (suppressedEmails.has(targetEmail)) continue;
+    if (!(await isReadyForColdEmailDraft(lead.id))) continue;
     eligible.push(lead.id);
     if (eligible.length >= BATCH_SIZE) break;
   }

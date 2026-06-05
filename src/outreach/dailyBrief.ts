@@ -43,6 +43,11 @@ import {
   buildMeetingFollowupRows,
   countOpenMeetingFollowups,
 } from './meetingFollowup.js';
+import {
+  buildOutboundRows,
+  countActiveOutboundSequences,
+} from './outboundSequence.js';
+import { OUTBOUND_BRIEF_LIMIT, renderOutboundCadence } from './brief/outbound.js';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
@@ -97,6 +102,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     openReactivationCallCount,
     openColdCallCount,
     openMeetingFollowupCount,
+    openOutboundCount,
   ] = await Promise.all([
     prisma.score.findMany({
       where: { scoredAt: { gte: cutoff } },
@@ -131,6 +137,7 @@ export const sendDailyBrief = async (): Promise<void> => {
     countOpenReactivationCalls(),
     countOpenColdCalls(),
     countOpenMeetingFollowups(),
+    countActiveOutboundSequences(),
   ]);
 
   const latestScores = dedupeLatestScores(scoreRows);
@@ -169,6 +176,7 @@ export const sendDailyBrief = async (): Promise<void> => {
   const reactivationCallRows = await buildReactivationCallRows({
     limit: REACTIVATIONS_CALL_BRIEF_LIMIT,
   });
+  const outboundRows = await buildOutboundRows({ limit: OUTBOUND_BRIEF_LIMIT });
   const coldCallRows = await buildColdCallRows({ limit: COLD_CALLS_BRIEF_LIMIT });
   const meetingFollowupRows = await buildMeetingFollowupRows({
     limit: MEETING_FOLLOWUPS_BRIEF_LIMIT,
@@ -186,6 +194,8 @@ export const sendDailyBrief = async (): Promise<void> => {
     renderAtRisk(atRiskTop, enriched),
     '',
     renderCallList(callList),
+    '',
+    renderOutboundCadence(outboundRows, publicUrl, openOutboundCount),
     '',
     renderRenewalsToCall(renewalCallRows, publicUrl, openRenewalCallCount),
     '',
@@ -227,6 +237,7 @@ export const sendDailyBrief = async (): Promise<void> => {
         openRenewalCallCount,
         openReactivationCallCount,
         openColdCallCount,
+        openOutboundCount,
         openMeetingFollowupCount,
         pendingCount,
         sentCount,

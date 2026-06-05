@@ -28,6 +28,10 @@ import { findSmokeTokens, isSmokeTestRecipient } from './smokeTokenGuard.js';
 import { flagRenewalForCall } from './renewalCallFlag.js';
 import { flagReactivationForCall } from './reactivationCallFlag.js';
 import { flagColdForCall } from './coldCallFlag.js';
+import {
+  hasActiveOutboundSequence,
+  logOutboundColdEmailSent,
+} from './outboundSequence.js';
 import { appendPostSalePhoneFooter } from '../shared/phoneConsentFooter.js';
 
 const POST_SALE_EMAIL_KINDS = new Set(['renewal', 'reactivation']);
@@ -438,9 +442,13 @@ export const sendApprovedDraft = async (draftId: string): Promise<void> => {
     await flagReactivationForCall(draftId);
   }
 
-  // Interleave a human call touch into the cold sequence — pairs the cold email
-  // with a phone touch (no-op when there is no phone on file).
   if (draft.kind === 'cold') {
-    await flagColdForCall(draftId);
+    const onOutbound = await hasActiveOutboundSequence(lead.id);
+    if (onOutbound) {
+      await logOutboundColdEmailSent(lead.id);
+    } else {
+      // Legacy email-first cadence — 3 post-email call touches (BD 2/5/9).
+      await flagColdForCall(draftId);
+    }
   }
 };

@@ -28,6 +28,12 @@ import {
   countOpenRenewalCalls,
   type RenewalCallRow,
 } from '../outreach/renewalCallFlag.js';
+import { flagColdForCall } from '../outreach/coldCallFlag.js';
+import {
+  countActiveOutboundSequences,
+  hasActiveOutboundSequence,
+  logOutboundColdEmailSent,
+} from '../outreach/outboundSequence.js';
 import {
   getEngagementDashboardBundle,
   getEngagementOverview,
@@ -276,6 +282,7 @@ const renderRenewalCallRow = (r: RenewalCallRow): string => {
 const renderTriageStrip = (counts: {
   pending: number;
   approved: number;
+  outbound: number;
   renewalsCall: number;
   manualVm: number;
   awaitingReply: number;
@@ -288,6 +295,7 @@ const renderTriageStrip = (counts: {
   return `
   <nav class="triage" aria-label="Queue overview">
     ${pill(laneQs('all'), 'Pending emails', counts.pending, counts.lane === 'all')}
+    ${pill('/outbound', 'Outbound cadence', counts.outbound, false)}
     ${pill('/renewals-call', 'Renewals to call', counts.renewalsCall, false)}
     ${pill('/manual-vm-queue', 'Manual VM', counts.manualVm, false)}
     ${pill(`${laneQs('all')}#awaiting-reply`, 'Awaiting reply', counts.awaitingReply, false)}
@@ -929,6 +937,7 @@ const renderPage = (
   totalPausedRejected: number,
   openRenewalsCall: number,
   openManualVm: number,
+  openOutbound: number,
   sortMode: 'newest' | 'value',
   laneMode: LaneMode,
   engagementPeriod: EngagementRange,
@@ -1003,6 +1012,7 @@ const renderPage = (
   ${renderTriageStrip({
     pending: totalPending,
     approved: totalApproved,
+    outbound: openOutbound,
     renewalsCall: openRenewalsCall,
     manualVm: openManualVm,
     awaitingReply: totalAwaitingReply,
@@ -1016,6 +1026,7 @@ const renderPage = (
   ${renderEngagementDashboard(engagementOverview)}
   <div class="top-meta">${totalPendingLane} shown · ${totalApproved} approved &amp; ready to send${awaitingReplyMeta}${undoMeta}</div>
   <div class="toolbar">
+    <a href="/outbound" style="font-size:14px;margin-right:12px;">Outbound cadence →</a>
     <a href="/copilot" style="font-size:14px;margin-right:12px;">Sales co-pilot →</a>
     <a href="/renewals-call" style="font-size:14px;margin-right:12px;">Renewals to call →</a>
     <a href="/manual-vm-queue" style="font-size:14px;margin-right:12px;">Manual VM queue →</a>
@@ -1086,6 +1097,7 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
     totalAwaitingReply,
     openRenewalsCall,
     openManualVm,
+    openOutbound,
   ] = await Promise.all([
     prisma.draft.findMany({
       where: { status: 'pending' },
@@ -1124,6 +1136,7 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
     prisma.lead.count({ where: awaitingWhere }),
     countOpenRenewalCalls(),
     countOpenManualVm(),
+    countActiveOutboundSequences(),
   ]);
   const renewalCallRows = await buildRenewalCallRows({ limit: RENEWALS_SECTION_LIMIT });
   const orderedPending =
@@ -1165,6 +1178,7 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
         totalPausedRejected,
         openRenewalsCall,
         openManualVm,
+        openOutbound,
         sortMode,
         laneMode,
         engagementPeriod,
@@ -1431,6 +1445,14 @@ queueRouter.post('/mark-sent/:id', queueAuth, async (req, res) => {
   await logSentEmailToHubspot(id);
   if (existing.kind === 'renewal') {
     await flagRenewalForCall(id);
+  }
+  if (existing.kind === 'cold') {
+    const onOutbound = await hasActiveOutboundSequence(existing.leadId);
+    if (onOutbound) {
+      await logOutboundColdEmailSent(existing.leadId);
+    } else {
+      await flagColdForCall(id);
+    }
   }
   res.redirect(303, '/queue');
 });
