@@ -17,6 +17,8 @@
     "compliance:matrix": "tsx src/scripts/exportVoicemailMatrix.ts",
     "compliance:briefing": "tsx src/scripts/exportCounselBriefing.ts",
     "redraft:stale-cold": "tsx src/scripts/redraftStaleColdPending.ts",
+    "auth:gmail": "tsx src/scripts/gmailAuth.ts",
+    "verify:calendar": "tsx src/scripts/verifyCalendarScope.ts",
     "migrate": "prisma migrate dev",
     "test": "vitest run",
     "test:watch": "vitest",

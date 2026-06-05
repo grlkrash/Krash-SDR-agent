@@ -1,7 +1,9 @@
 // Run once: tsx src/scripts/gmailAuth.ts
 // Then paste the printed refresh_token into GMAIL_REFRESH_TOKEN in .env
 import 'dotenv/config';
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { exec } from 'node:child_process';
 import { google } from 'googleapis';
 
@@ -12,6 +14,8 @@ const REDIRECT_URI = `http://localhost:${PORT}`;
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.readonly',
+  // Discovery demo booking — creates Calendar events with Google Meet links.
+  'https://www.googleapis.com/auth/calendar.events',
 ];
 
 const requireEnv = (name: string): string => {
@@ -84,6 +88,19 @@ if (tokens.refresh_token === undefined || tokens.refresh_token === null) {
   );
 }
 
+const refreshToken = tokens.refresh_token;
 console.log('\nGMAIL_REFRESH_TOKEN=');
-console.log(tokens.refresh_token);
-console.log('\nPaste the value above into .env (GMAIL_REFRESH_TOKEN=...) and re-source.');
+console.log(refreshToken);
+
+const envPath = path.resolve(process.cwd(), '.env');
+if (fs.existsSync(envPath)) {
+  const raw = fs.readFileSync(envPath, 'utf8');
+  const line = `GMAIL_REFRESH_TOKEN=${refreshToken}`;
+  const next = /^GMAIL_REFRESH_TOKEN=.*$/m.test(raw)
+    ? raw.replace(/^GMAIL_REFRESH_TOKEN=.*$/m, line)
+    : `${raw.trimEnd()}\n${line}\n`;
+  fs.writeFileSync(envPath, next);
+  console.log(`\nUpdated ${envPath} with new GMAIL_REFRESH_TOKEN.`);
+} else {
+  console.log('\nNo .env found — paste the token above into .env and Railway.');
+}
