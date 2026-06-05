@@ -1,23 +1,20 @@
 // Discovery-call prep brief prompt (Prompt 9.4).
 //
-// Sonia opens /prep-brief/:dealId 5 minutes before a discovery call. The
-// markdown is rendered inline (and optionally emailed). The brief MUST
-// read like Sonia studied this prospect for hours — concrete facts only.
-//
-// The `${commission}` token in the system prompt is a literal placeholder
-// the MODEL emits (e.g. "$240 commission") — NOT a TS template binding,
-// hence the `\${...}` escapes in the template literal below.
-//
-// `any` is forbidden in this codebase (`.cursorrules`), so the
-// `hubspotEngagements: any[]` / `hubspotDeal: any` shape the spec sketches
-// is realized via the typed `PrepBriefEngagement` / `PrepBriefDeal`
-// structs below. The outreach module builds them after the HubSpot fetch.
+// Sonia opens /prep-brief/lead/:leadId (or /prep-brief/:dealId) before a call.
+// The markdown is rendered inline (and optionally emailed). Lead + enrichment
+// data is the source of truth; HubSpot deal/engagement data supplements when present.
 
 import type { Enrichment, Lead } from '@prisma/client';
 
 export const PREP_BRIEF_SYSTEM = `You generate a 5-minute pre-call brief for a B2B SDR (Sonia) at Sobriety Select. The brief must be markdown, scannable in under 60 seconds, and packed with specific facts that make Sonia sound like she's been studying this prospect for hours.
 
-STRUCTURE (use these exact headers):
+STRUCTURE (use these exact headers in this order):
+## 📍 Facility snapshot
+Bird's-eye view of what we know: full location (street/city/state/zip when present), services offered, inferred facility type from services + teamSizeSignal (e.g. "IOP + sober living, small team"), Google rating/review count, phone, website. Bed count only if in data — otherwise "(bed count unknown)". One tight paragraph or 4–6 bullets.
+
+## 🌐 Web presence & site analysis
+Website scan findings: list ONLY pain_points keys that are true (human-readable labels), legitscript status, competing-directory signal (listed vs missing from Psychology Today / Rehabs.com / Recovery.com), hiring signal if active, marketing tech stack tools detected. Evidence quote if present. This section is the site/intelligence read — no pitch yet.
+
 ## One-line summary
 {facility}, {bed-count if known}, {city state}, owner {name if known}. Expected tier: {tier} (\${commission} commission).
 
@@ -28,7 +25,7 @@ Three bullet items. Prefer signal-based (hiring spike, missing from competing di
 Top 3 from the painPoints JSON. One bullet each, ≤ 12 words.
 
 ## 📜 Conversation history
-1-line summary of last 3 HubSpot engagements (oldest first → newest). If none, say 'No prior contact'.
+1-line summary of last 3 HubSpot engagements (oldest first → newest). If none, summarize outreachHistory (our sent emails/VM) if present. If both empty, say 'No prior contact'.
 
 ## ❓ The 3 questions to ask
 Specific, open-ended questions based on context. Not generic ('how's business?'). Examples: 'How many of your beds are private-pay vs Medicaid?' 'Your IOP page has no schema markup — is that intentional or a gap?'
@@ -47,9 +44,6 @@ Exact tier + annual price + Sonia's commission. From PRD pricing table.
 
 Output ONLY the markdown — no preamble.`;
 
-// Annual list prices from PRD §5 pricing table. Surface them in the user
-// prompt so the 💵 Pricing reminder section is grounded in concrete numbers
-// rather than the model's training-time guess.
 const TIER_ANNUAL_PRICE: Record<string, number> = {
   claimed: 600,
   select: 2400,
@@ -61,6 +55,19 @@ const TIER_ANNUAL_PRICE: Record<string, number> = {
 };
 
 const ENGAGEMENT_BODY_MAX = 240;
+
+const PAIN_POINT_LABELS: Record<string, string> = {
+  thin_about_page: 'Thin about page',
+  no_team_photos: 'No team photos on site',
+  stock_photography_only: 'Stock photography only',
+  no_outcomes_data: 'No outcomes/data published',
+  broken_or_no_https: 'Broken site or no HTTPS',
+  no_schema_markup: 'No schema markup',
+  no_reviews_mentioned: 'No reviews mentioned on site',
+  weak_seo_title: 'Weak SEO title tags',
+  no_website: 'No website on file',
+  broken_or_slow: 'Website broken or slow to load',
+};
 
 export type PrepBriefContact = {
   firstName: string | null;
@@ -84,9 +91,13 @@ export type PrepBriefEngagement = {
   kind: 'note' | 'email' | 'call' | 'meeting' | 'task';
   subject: string | null;
   body: string | null;
-  // ISO-8601 string — keeps the user prompt deterministic regardless of the
-  // runner's timezone, and Claude has no trouble parsing them.
   timestamp: string;
+};
+
+export type PrepBriefOutreachTouch = {
+  kind: string;
+  subject: string | null;
+  sentAt: string;
 };
 
 const collapseAndTrim = (raw: string | null, max: number): string | null => {
@@ -96,6 +107,28 @@ const collapseAndTrim = (raw: string | null, max: number): string | null => {
   return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max - 1)}…`;
 };
 
+const summarizePainPoints = (painPoints: unknown): string[] => {
+  if (typeof painPoints !== 'object' || painPoints === null || Array.isArray(painPoints)) {
+    return [];
+  }
+  const entries = Object.entries(painPoints as Record<string, unknown>);
+  return entries
+    .filter(([, v]) => v === true)
+    .map(([key]) => PAIN_POINT_LABELS[key] ?? key.replace(/_/g, ' '));
+};
+
+const inferFacilityType = (
+  services: string[],
+  teamSizeSignal: string | null,
+): string => {
+  const parts: string[] = [];
+  if (services.length > 0) parts.push(services.slice(0, 5).join(', '));
+  if (teamSizeSignal !== null && teamSizeSignal !== '' && teamSizeSignal !== 'unknown') {
+    parts.push(`${teamSizeSignal} team`);
+  }
+  return parts.length === 0 ? 'unknown' : parts.join(' · ');
+};
+
 export const buildPrepBriefUser = (
   lead: Lead,
   enrichment: Enrichment,
@@ -103,21 +136,27 @@ export const buildPrepBriefUser = (
   hubspotDeal: PrepBriefDeal,
   commission: number,
   freeListingOffered: boolean = false,
+  outreachHistory: PrepBriefOutreachTouch[] = [],
 ): string => {
   const tierRaw = hubspotDeal.productType ?? enrichment.expectedProduct ?? null;
   const tier = tierRaw === null || tierRaw === '' ? 'unknown' : tierRaw;
   const annualPrice = TIER_ANNUAL_PRICE[tier] ?? null;
+  const sitePainPoints = summarizePainPoints(enrichment.painPoints);
 
   const context = {
     facility: {
       name: lead.name,
+      street: lead.street,
       city: lead.city,
       state: lead.state,
+      zip: lead.zip,
+      facilityType: inferFacilityType(lead.services, enrichment.teamSizeSignal),
+      services: lead.services,
       website: lead.website,
       phoneE164: lead.phoneE164,
-      services: lead.services,
       googleRating: lead.googleRating,
       googleReviews: lead.googleReviews,
+      source: lead.source,
     },
     owner: {
       name: enrichment.ownerName,
@@ -131,6 +170,7 @@ export const buildPrepBriefUser = (
     freeListingOffered,
     teamSize: enrichment.teamSizeSignal,
     painPoints: enrichment.painPoints,
+    sitePainPoints,
     signals: enrichment.signals,
     evidenceQuote: enrichment.evidenceQuote,
     legitscriptStatus: enrichment.legitscriptStatus,
@@ -152,6 +192,7 @@ export const buildPrepBriefUser = (
       body: collapseAndTrim(e.body, ENGAGEMENT_BODY_MAX),
       timestamp: e.timestamp,
     })),
+    outreachHistory,
   };
 
   const priceLine = annualPrice === null
@@ -166,9 +207,11 @@ export const buildPrepBriefUser = (
     '',
     `Use commission=$${commission} and tier="${tier}" (${priceLine}) when filling the One-line summary and the 💵 Pricing reminder.`,
     '',
+    '## 📍 Facility snapshot must include location, services, and facilityType from the JSON — this is the bird\'s-eye data view Sonia scans first.',
+    '## 🌐 Web presence & site analysis must translate sitePainPoints, signals, and legitscriptStatus into plain English — no invented findings.',
     'If bed-count is not in the data, write "(bed count unknown)" in the One-line summary — never invent a number.',
     'If owner.name is null, omit the "owner ..." clause from the One-line summary rather than fabricating one.',
-    'For 📜 Conversation history: render the 3 most recent recentEngagements (or all of them if fewer than 3) in chronological order (oldest first → newest). If recentEngagements is empty, write exactly "No prior contact".',
+    'For 📜 Conversation history: prefer recentEngagements (HubSpot); if empty, use outreachHistory; if both empty write exactly "No prior contact".',
     'Three sharpest data points MUST prefer signal-based observations from signals.hiring / signals.competingDirectories / signals.techStack when present, before falling back to painPoints.',
     freeListingOffered
       ? 'freeListingOffered is true: include the "💎 Free listing → premium pivot" section and the free-vs-paid objection. The prospect was offered the free Sobriety Select profile in cold outreach — confirm/claim it as the easy win, then pivot to the paid tier value. Honest framing only — no outcome guarantees.'
