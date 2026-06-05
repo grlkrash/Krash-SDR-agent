@@ -17,10 +17,14 @@ try {
     hint: 'Calendar scope is active — Book demo will send Google Meet invites.',
   }));
 } catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  const apiDisabled = msg.includes('has not been used in project') || msg.includes('it is disabled');
   console.log(JSON.stringify({
     ok: false,
-    error: err instanceof Error ? err.message : String(err),
-    hint: 'Re-run: npx tsx src/scripts/gmailAuth.ts and update GMAIL_REFRESH_TOKEN',
+    error: msg,
+    hint: apiDisabled
+      ? 'Enable Google Calendar API in Google Cloud Console (free), wait 2 min, re-run verify. Or use manual booking on /outbound.'
+      : 'Re-run: npx tsx src/scripts/gmailAuth.ts and update GMAIL_REFRESH_TOKEN',
   }));
   process.exitCode = 1;
 }

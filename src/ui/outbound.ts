@@ -1,7 +1,10 @@
 import express from 'express';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { queueAuth } from '../middleware/queueAuth.js';
-import { bookDiscoveryMeeting } from '../outreach/bookDiscoveryMeeting.js';
+import { bookDiscoveryMeeting, markDemoInviteSent } from '../outreach/bookDiscoveryMeeting.js';
+import { buildGoogleCalendarComposeUrl } from '../shared/googleCalendarComposeUrl.js';
 import {
   buildOutboundRows,
   buildOutboundStartCandidates,
@@ -24,6 +27,10 @@ import {
 } from '../shared/outboundSteps.js';
 
 export const outboundRouter = express.Router();
+
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
+});
 
 const LeadIdSchema = /^[a-z0-9]+$/;
 
@@ -93,13 +100,16 @@ const renderBookDemoForm = (
 ): string => {
   const bookUrl = getBookingLink();
   const emailDefault = escapeHtml(r.ownerEmail ?? '');
-  const calHint = calendarOk
-    ? 'Sends Google Calendar invite with Meet to client email + logs meeting in HubSpot.'
-    : 'Calendar scope missing — run <code>npx tsx src/scripts/gmailAuth.ts</code> first.';
+  const formAction = `/outbound/book-demo/${encodeURIComponent(r.leadId)}`;
+  const markAction = `/outbound/mark-demo-sent/${encodeURIComponent(r.leadId)}`;
+  const openCalAction = `/outbound/open-calendar/${encodeURIComponent(r.leadId)}`;
+  const autoBtn = calendarOk
+    ? `<button class="btn btn-primary" type="submit">Auto-send invite (API)</button>`
+    : '';
   return `<div class="book-form">
-    <strong>Book demo</strong> — ${calHint}
-    <form method="POST" action="/outbound/book-demo/${encodeURIComponent(r.leadId)}">
-      <label>Client email (calendar invite goes here)</label>
+    <strong>Book demo</strong>
+    <form method="POST" action="${formAction}">
+      <label>Client email (invite goes here)</label>
       <input type="email" name="attendeeEmail" value="${emailDefault}" required placeholder="owner@facility.com" style="width:100%" />
       <label>Start (Eastern time)</label>
       <input type="datetime-local" name="startAt" required />
@@ -110,10 +120,13 @@ const renderBookDemoForm = (
         <option value="45">45 min</option>
       </select>
       ${notesField('bookNotes')}
-      <div style="margin-top:8px">
-        <button class="btn btn-primary" type="submit">Book demo + send invite</button>
-        <a href="${escapeHtml(bookUrl)}" target="_blank" rel="noopener" style="margin-left:8px;font-size:12px">HubSpot scheduler link</a>
+      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        ${autoBtn}
+        <button class="btn btn-muted" type="submit" formaction="${escapeHtml(openCalAction)}" formmethod="get" formtarget="_blank">Open Google Calendar ↗</button>
+        <button class="btn btn-connected" type="submit" formaction="${escapeHtml(markAction)}">Mark invite sent</button>
+        <a href="${escapeHtml(bookUrl)}" target="_blank" rel="noopener" style="font-size:12px">HubSpot scheduler</a>
       </div>
+      <p class="meta" style="margin-top:8px">Manual path: fill fields → <strong>Open Google Calendar</strong> (add Meet, send invite) → come back → <strong>Mark invite sent</strong> (logs HubSpot + advances sequence).</p>
     </form>
   </div>`;
 };
@@ -232,8 +245,9 @@ const renderActiveRow = (
 outboundRouter.get('/outbound', queueAuth, async (req, res) => {
   const meetParam = typeof req.query.meet === 'string' ? req.query.meet : '';
   const emailParam = typeof req.query.email === 'string' ? req.query.email : '';
+  const manual = typeof req.query.manual === 'string';
   const flash = typeof req.query.booked === 'string'
-    ? `<div class="flash">Demo booked.${emailParam !== '' ? ` Calendar invite sent to ${escapeHtml(emailParam)}.` : ''}${meetParam !== '' ? ` Meet: ${escapeHtml(meetParam)}` : ''}</div>`
+    ? `<div class="flash">${manual ? 'Demo logged in HubSpot' : 'Demo booked'}.${emailParam !== '' ? ` ${manual ? 'Invite sent to' : 'Calendar invite sent to'} ${escapeHtml(emailParam)}.` : ''}${meetParam !== '' ? ` Meet: ${escapeHtml(meetParam)}` : ''}</div>`
     : '';
   const [rows, candidates, stages, calendarOk] = await Promise.all([
     buildOutboundRows({ limit: 100 }),
@@ -261,7 +275,7 @@ outboundRouter.get('/outbound', queueAuth, async (req, res) => {
 
   const calWarn = calendarOk
     ? ''
-    : '<div class="flash flash-warn">Google Calendar scope not active — Book demo will fail until you re-run <code>npx tsx src/scripts/gmailAuth.ts</code> and update <code>GMAIL_REFRESH_TOKEN</code> on Railway.</div>';
+    : '<div class="flash flash-warn"><strong>Auto-send invite is off</strong> (Calendar API not enabled or scope missing). Use <strong>Open Google Calendar ↗</strong> then <strong>Mark invite sent</strong> on each demo row — no API setup required.</div>';
 
   const calNote = 'Two booking paths: (1) <strong>Book demo</strong> form here sends a Google Calendar invite with Meet to the client + logs HubSpot meeting. (2) Your <strong>HubSpot scheduler link</strong> in cold emails — when prospects self-book, HubSpot syncs to Google Calendar if connected in HubSpot Settings → Calendar. Both appear in HubSpot for tracking.';
 
@@ -388,6 +402,80 @@ outboundRouter.post('/outbound/book-demo/:leadId', queueAuth, async (req, res) =
     });
     const params = new URLSearchParams({ booked: '1', email: result.attendeeEmail });
     if (result.meetUrl !== null) params.set('meet', result.meetUrl);
+    res.redirect(303, `/outbound?${params.toString()}`);
+  } catch (err) {
+    res.status(400).type('html').send(`<p>${escapeHtml(err instanceof Error ? err.message : String(err))}</p><a href="/outbound">Back</a>`);
+  }
+});
+
+const readBookFields = (req: express.Request): {
+  startAt: string;
+  attendeeEmail: string;
+  durationMinutes: number;
+  bookNotes: string;
+} | null => {
+  const raw = req.method === 'GET' ? req.query : req.body;
+  const parsed = BookSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  return {
+    startAt: parsed.data.startAt,
+    attendeeEmail: parsed.data.attendeeEmail,
+    durationMinutes: parsed.data.durationMinutes ?? 30,
+    bookNotes: parsed.data.bookNotes ?? '',
+  };
+};
+
+outboundRouter.get('/outbound/open-calendar/:leadId', queueAuth, async (req, res) => {
+  const leadId = readLeadId(req);
+  if (leadId === null) {
+    res.status(400).json({ error: 'invalid lead id' });
+    return;
+  }
+  const fields = readBookFields(req);
+  if (fields === null) {
+    res.status(400).type('html').send('<p>Fill client email, start time, and duration first.</p>');
+    return;
+  }
+  const row = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (row === null) {
+    res.status(404).send('Lead not found');
+    return;
+  }
+  const description = [
+    `Discovery demo with ${row.name} (${row.city}, ${row.state}).`,
+    fields.bookNotes !== '' ? fields.bookNotes : '',
+    'Add Google Meet video conferencing before sending.',
+  ].filter((p) => p !== '').join('\n\n');
+  const url = buildGoogleCalendarComposeUrl({
+    title: `Sobriety Select discovery — ${row.name}`,
+    description,
+    startAtLocal: fields.startAt,
+    durationMinutes: fields.durationMinutes,
+    attendeeEmail: fields.attendeeEmail,
+  });
+  res.redirect(302, url);
+});
+
+outboundRouter.post('/outbound/mark-demo-sent/:leadId', queueAuth, async (req, res) => {
+  const leadId = readLeadId(req);
+  if (leadId === null) {
+    res.status(400).json({ error: 'invalid lead id' });
+    return;
+  }
+  const fields = readBookFields(req);
+  if (fields === null) {
+    res.status(400).json({ error: 'invalid booking payload' });
+    return;
+  }
+  try {
+    const result = await markDemoInviteSent({
+      leadId,
+      startAtLocal: fields.startAt,
+      attendeeEmail: fields.attendeeEmail,
+      durationMinutes: fields.durationMinutes,
+      notes: fields.bookNotes,
+    });
+    const params = new URLSearchParams({ booked: '1', email: result.attendeeEmail, manual: '1' });
     res.redirect(303, `/outbound?${params.toString()}`);
   } catch (err) {
     res.status(400).type('html').send(`<p>${escapeHtml(err instanceof Error ? err.message : String(err))}</p><a href="/outbound">Back</a>`);
