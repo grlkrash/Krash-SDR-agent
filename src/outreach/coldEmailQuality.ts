@@ -13,7 +13,9 @@ export type ColdEmailQualityIssue =
   | 'too-short'
   | 'missing-ss-identity'
   | 'overpromise'
-  | 'oversells-invisibility';
+  | 'oversells-invisibility'
+  | 'unicode-dash'
+  | 'dash-punctuation';
 
 export type SubjectQualityIssue =
   | 'too-many-words'
@@ -23,7 +25,9 @@ export type SubjectQualityIssue =
   | 'spam-pattern'
   | 'banned-word'
   | 'has-question'
-  | 'has-exclamation';
+  | 'has-exclamation'
+  | 'unicode-dash'
+  | 'dash-punctuation';
 
 export type ColdEmailQualityResult = {
   ok: boolean;
@@ -83,6 +87,13 @@ const OVERPROMISE_RX =
 const OVERSELL_INVISIBILITY_RX =
   /\b(?:invisible|no one can find you|nobody can find you|families can['’]?t find you|can['’]?t be found|don['’]?t exist online|do not exist online|zero visibility|completely (?:missing|invisible)|impossible to find|off the map)\b/i;
 
+const UNICODE_DASH_RX = /[\u2013\u2014]/;
+const DASH_AS_PUNCTUATION_RX = /\w\s-\s+[A-Za-z]/;
+
+export const hasUnicodeDash = (text: string): boolean => UNICODE_DASH_RX.test(text);
+
+export const hasDashPunctuation = (text: string): boolean => DASH_AS_PUNCTUATION_RX.test(text);
+
 // Matches the cold-email free-listing entry offer (explicit "free" OR pre-built
 // basic profile + claim/live — premium hiring angles often omit the word "free").
 export const FREE_LISTING_ENTRY_HOOK_RX =
@@ -115,6 +126,8 @@ export const assessColdEmailSubject = (
   if (SUBJECT_VENDOR_PITCH_RX.test(lower)) issues.push('vendor-pitch');
   if (SUBJECT_BANNED_RX.test(lower)) issues.push('banned-word');
   if (SUBJECT_SPAM_RX.test(trimmed)) issues.push('spam-pattern');
+  if (hasUnicodeDash(trimmed)) issues.push('unicode-dash');
+  if (hasDashPunctuation(trimmed)) issues.push('dash-punctuation');
 
   const cityHit = ctx.city.trim() !== '' && lower.includes(ctx.city.toLowerCase());
   const ownerFirst = ctx.ownerName?.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
@@ -147,6 +160,12 @@ export const assessColdEmailQuality = (body: string): ColdEmailQualityResult => 
   }
   if (OVERSELL_INVISIBILITY_RX.test(body)) {
     issues.push('oversells-invisibility');
+  }
+  if (hasUnicodeDash(body)) {
+    issues.push('unicode-dash');
+  }
+  if (hasDashPunctuation(body)) {
+    issues.push('dash-punctuation');
   }
 
   return { ok: issues.length === 0, issues, wordCount };
@@ -186,6 +205,9 @@ export const buildSubjectRetryFeedback = (subject: SubjectQualityResult): string
   if (subject.issues.includes('spam-pattern')) {
     parts.push('Subject triggers spam patterns (all caps or multiple exclamation marks). Use lowercase colleague tone.');
   }
+  if (subject.issues.includes('unicode-dash') || subject.issues.includes('dash-punctuation')) {
+    parts.push('Subject must not use em dashes, en dashes, or dash-as-punctuation. Use plain words only.');
+  }
 
   return parts.join(' ');
 };
@@ -214,6 +236,11 @@ export const buildQualityRetryFeedback = (
   if (quality.issues.includes('oversells-invisibility')) {
     parts.push(
       'Do not catastrophize their visibility. Most centers already rank for their own name. Cut "invisible", "no one/families can\'t find you", "don\'t exist online", "zero visibility". Describe the gap precisely and locally ("families searching {city} by insurance may not see you on map-forward directories yet").',
+    );
+  }
+  if (quality.issues.includes('unicode-dash') || quality.issues.includes('dash-punctuation')) {
+    parts.push(
+      'Remove em dashes (—), en dashes (–), and dash-as-punctuation ("word - word"). Use periods, commas, or two short sentences. Write at an 8th-grade reading level with plain words.',
     );
   }
   return parts.join(' ');

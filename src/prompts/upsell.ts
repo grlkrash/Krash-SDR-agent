@@ -9,8 +9,11 @@
 // to Draft.specificFacts so /queue surfaces it without re-parsing.
 
 import type { Enrichment, Lead } from '@prisma/client';
+import { DRAFT_VOICE_RULES } from './draftVoice.js';
 
 export const UPSELL_SYSTEM = `Write a short, warm congratulation + upsell hook to a Sobriety Select customer who has shown a NEW growth signal (hiring, expansion, missing from competing directories, expanded tech stack). Open with a specific congratulation tied to the signal. Pivot to ONE upsell angle that fits: SEO if missing from directories, PPC/Premium if scaling, account expansion if hiring intake. End with a soft ask ('want 10 min to talk about scaling this listing alongside your growth?'). 70 words max. No price, no tier names, no fluff.
+
+${DRAFT_VOICE_RULES}
 
 Output ONLY valid JSON. No preamble, no markdown fences. Schema: { "subject": string, "body": string }`;
 

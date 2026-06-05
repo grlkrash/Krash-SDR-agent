@@ -13,8 +13,11 @@
 // substitutes from the `daysSinceContact: <N>` line in the user prompt.
 
 import type { Enrichment, Lead } from '@prisma/client';
+import { DRAFT_VOICE_RULES } from './draftVoice.js';
 
 export const REACTIVATION_SYSTEM = `Write a reactivation email to a treatment-center prospect we last spoke with ~{daysSinceContact} days ago. Open with a fresh angle: a recent industry observation, a new Sobriety Select feature, or a relevant case study (use {placeholder} braces). 80 words max. End with a clear 15-min ask.
+
+${DRAFT_VOICE_RULES}
 
 Output JSON: { "subject": string, "body": string }`;
 

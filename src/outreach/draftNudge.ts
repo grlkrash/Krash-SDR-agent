@@ -10,6 +10,7 @@ import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages';
 import { z } from 'zod';
 import { claude, extractJSON } from '../shared/claude.js';
 import { NUDGE_SYSTEM, buildNudgeUser } from '../prompts/nudge.js';
+import { hasDashPunctuation, hasUnicodeDash } from './coldEmailQuality.js';
 import { scanLeaks } from './leakScan.js';
 
 const cached = (text: string): Array<TextBlockParam> => [
@@ -71,6 +72,15 @@ export const draftNudge = async (leadId: string): Promise<string | null> => {
     }],
   });
   const gen = GenSchema.parse(extractJSON(msg));
+
+  const voiceText = `${gen.subject}\n${gen.body}`;
+  if (hasUnicodeDash(voiceText) || hasDashPunctuation(voiceText)) {
+    await audit('draftNudge.voice-quality-rejected', leadId, {
+      subjectHasDash: hasUnicodeDash(gen.subject) || hasDashPunctuation(gen.subject),
+      bodyHasDash: hasUnicodeDash(gen.body) || hasDashPunctuation(gen.body),
+    });
+    return null;
+  }
 
   // Hard pricing/tier-name gate — same gate cold drafts run through. A leak
   // here is a model-obedience failure worth surfacing in AuditLog; we skip

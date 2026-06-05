@@ -8,6 +8,7 @@
 // offer stays the reason-to-talk; the booking link is the ask.
 
 import type { Enrichment, Lead } from '@prisma/client';
+import { DRAFT_VOICE_RULES } from './draftVoice.js';
 
 export const RESCHEDULE_SYSTEM = `Write a short, warm email to a treatment-center prospect who booked a quick call with Sobriety Select that did not happen (~{daysSinceMeeting} days ago). Assume good faith — no guilt, no "you missed our meeting" framing. Acknowledge calendars get busy, restate the one reason it is worth a few minutes (getting their free Sobriety Select profile claimed and live so families searching their region can find them), and make re-booking effortless.
 
@@ -15,7 +16,9 @@ RULES:
 - 70 words max. One clear re-book ask.
 - HONEST: never promise outcomes ("fill your beds", guaranteed calls/admissions) and never claim they are invisible or that families "can't find" them. The free profile improves discoverability; it does not guarantee volume.
 - When a BOOKING LINK is provided, close with a soft re-book ask and paste that exact URL once as plain text. Otherwise offer two concrete time options.
-- No em dashes. No banned hype words (revolutionary, game-changer, guaranteed, unlock).
+- No banned hype words (revolutionary, game-changer, guaranteed, unlock).
+
+${DRAFT_VOICE_RULES}
 
 Output JSON: { "subject": string, "body": string }`;
 

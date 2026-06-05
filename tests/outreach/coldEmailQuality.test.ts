@@ -5,7 +5,9 @@ import {
   assessColdDraftQuality,
   bodyWordCount,
   COLD_BODY_MIN_WORDS,
+  hasDashPunctuation,
   hasFreeListingEntryHook,
+  hasUnicodeDash,
   SUBJECT_MAX_CHARS,
   SUBJECT_MAX_WORDS,
 } from '../../src/outreach/coldEmailQuality.js';
@@ -65,6 +67,33 @@ describe('coldEmailQuality — body', () => {
     const result = assessColdEmailQuality(body);
     expect(result.ok).toBe(false);
     expect(result.issues).toContain('oversells-invisibility');
+  });
+
+  it('flags em dashes in body', () => {
+    const body = GOLD_BODY.replace(
+      'Robert, Tri County',
+      'Robert — Tri County',
+    );
+    const result = assessColdEmailQuality(body);
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain('unicode-dash');
+  });
+
+  it('flags dash-as-punctuation in body', () => {
+    const body = GOLD_BODY.replace(
+      'Robert, Tri County',
+      'Robert - Tri County',
+    );
+    const result = assessColdEmailQuality(body);
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain('dash-punctuation');
+  });
+
+  it('hasUnicodeDash and hasDashPunctuation helpers', () => {
+    expect(hasUnicodeDash('word—word')).toBe(true);
+    expect(hasUnicodeDash('word-word')).toBe(false);
+    expect(hasDashPunctuation('Hi - I wanted')).toBe(true);
+    expect(hasDashPunctuation('10-15 minute')).toBe(false);
   });
 
   it('flags missing SS identity', () => {

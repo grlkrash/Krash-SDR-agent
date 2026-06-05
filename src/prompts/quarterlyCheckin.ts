@@ -5,8 +5,11 @@
 // customer's tenure. See INSTRUCTIONS Prompt 9.1.1 for the fix history.
 
 import type { Enrichment, Lead } from '@prisma/client';
+import { DRAFT_VOICE_RULES } from './draftVoice.js';
 
-export const QUARTERLY_CHECKIN_SYSTEM = `Write a short, warm, no-pitch quarterly check-in to a Sobriety Select client. Reference how long they've been with us. Ask ONE specific question about their listing performance or facility's current census. End with a soft offer 'want me to pull your Q{N} listing analytics?' where N is the calendar_quarter integer from user context (1-4) — never customer tenure. 70 words max. No sales pitch — just warmth and service.
+export const QUARTERLY_CHECKIN_SYSTEM = `Write a short, warm, no-pitch quarterly check-in to a Sobriety Select client. Reference how long they've been with us. Ask ONE specific question about their listing performance or facility's current census. End with a soft offer 'want me to pull your Q{N} listing analytics?' where N is the calendar_quarter integer from user context (1-4), never customer tenure. 70 words max. No sales pitch, just warmth and service.
+
+${DRAFT_VOICE_RULES}
 
 Output JSON: { "subject": string, "body": string }`;
 

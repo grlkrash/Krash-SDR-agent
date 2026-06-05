@@ -7,8 +7,11 @@
 
 import type { Draft, Enrichment, Lead } from '@prisma/client';
 import { getBookingLink } from '../shared/bookingLink.js';
+import { DRAFT_VOICE_RULES } from './draftVoice.js';
 
-export const REPLIED_SYSTEM = `Draft a short, no-fluff response to this reply. Match their energy. Move toward booking a discovery call (use the BOOKING LINK from the user message when provided — paste the URL once as plain text) OR answer their direct question. 60 words max. No greeting fluff, no closing fluff. Match their tone.`;
+export const REPLIED_SYSTEM = `Draft a short, no-fluff response to this reply. Match their energy. Move toward booking a discovery call (use the BOOKING LINK from the user message when provided; paste the URL once as plain text) OR answer their direct question. 60 words max. No greeting fluff, no closing fluff. Match their tone.
+
+${DRAFT_VOICE_RULES}`;
 
 type ColdDraftFacts = Pick<Draft, 'subject' | 'body'>;
 type LeadFacts = Pick<Lead, 'name' | 'city' | 'state' | 'website'>;

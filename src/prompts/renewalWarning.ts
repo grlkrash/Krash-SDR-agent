@@ -18,6 +18,7 @@
 import type { Enrichment, Lead } from '@prisma/client';
 import type { ContractTermMonths } from '../shared/dealRenewal.js';
 import { contractTermPartnershipLabel } from '../shared/dealRenewal.js';
+import { DRAFT_VOICE_RULES } from './draftVoice.js';
 
 export const RENEWAL_WARNING_SYSTEM = `Write a 60-day pre-renewal email to a Sobriety Select client. Tone: confident, not anxious — a partner confirming the next contract period together, not a salesperson worried about losing them.
 
@@ -33,9 +34,11 @@ The email MUST NOT:
 - Name the tier (e.g., "claimed", "select", "premium", "Select Listing"). "Sobriety Select" as the brand name is fine.
 - Include any {variable} or {placeholder} tokens — those render raw and ship by accident.
 
-If a specific positive metric would genuinely land, include it as an obviously-bracketed optional fill-in for Sonia, formatted exactly: [OPTIONAL: add a specific win, e.g. "you've had 14 new inquiries this quarter"]. Otherwise omit the metric entirely — the body must read cleanly with zero fill-ins required.
+If a specific positive metric would genuinely land, include it as an obviously-bracketed optional fill-in for Sonia, formatted exactly: [OPTIONAL: add a specific win, e.g. "you've had 14 new inquiries this quarter"]. Otherwise omit the metric entirely. The body must read cleanly with zero fill-ins required.
 
 70-80 words for the body (the optional bracket, if used, does not count toward the word budget).
+
+${DRAFT_VOICE_RULES}
 
 Output JSON: { "subject": string, "body": string }`;
 

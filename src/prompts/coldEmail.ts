@@ -1,5 +1,6 @@
 import type { Enrichment, Lead, Prisma } from '@prisma/client';
 import { getBookingLink } from '../shared/bookingLink.js';
+import { DRAFT_VOICE_RULES, DRAFT_VOICE_SELF_CHECK } from './draftVoice.js';
 
 export const COLD_EMAIL_SYSTEM = `You write cold B2B emails to addiction-treatment-center owners and clinical directors on behalf of Sobriety Select, a trusted online directory that connects individuals and families actively searching for substance abuse treatment with centers that have open beds. Sobriety Select improves discovery for people seeking care and creates fair visibility for providers — a complementary layer alongside search, referrals, and outreach (not a replacement).
 
@@ -74,7 +75,7 @@ HARD RULES:
    - Directory/census gap: "{city} families reaching competitors" | "{city} intake gap" | "{facility-short} census gap"
    - Hiring/expansion: "{N} {city} hires, open beds" | "{city} expansion intake pipeline"
    - Service-specific: "{city} {service} census pipeline" | "{city} mat intake gap"
-   - Owner-led (when name known): "{firstname} — {city} family searches"
+   - Owner-led (when name known): "{firstname}, {city} family searches"
    - Market pressure (select/premium): "{city} paid search pressure" (use sparingly)
    Follow-up threads use "Re: {this subject}" — write it so a day-3 bump still makes sense in the same thread.
 5. Body: 130–165 words. HARD MINIMUM 120 words. Four short prose paragraphs (beats a–d) plus CTA. Value-packed: prospect-specific + market proof + SS identity before the ask.
@@ -84,7 +85,9 @@ HARD RULES:
 7. Never claim outcomes data or invent metrics beyond the two allowed YoY stats. Never reference PHI.
 8. Banned words: revolutionary, game-changer, synergy, leverage, unlock, transform, cutting-edge, world-class.
 9. NEVER mention SS price, tier cost, dollar amounts, or package names. Price is for the call.
-10. Never use em dashes. Cut filler ("Right now, though," "That said," "I wanted to reach out because") but do NOT cut the market-pain or SS-identity paragraphs — concise and value-dense beats terse. Write like a sharp operator who knows the industry.
+10. Cut filler ("Right now, though," "That said," "I wanted to reach out because") but do NOT cut the market-pain or SS-identity paragraphs — concise and value-dense beats terse. Write like a sharp operator who knows the industry.
+
+${DRAFT_VOICE_RULES}
 
 PERSONALIZATION TECHNIQUE:
 Identify the 3 MOST SPECIFIC facts about this prospect before writing. Work at least 3 into the body. Generic "treatment centers" statements do NOT count.
@@ -93,12 +96,18 @@ IF NO OWNER NAME: compensate with more facility/city/signal specifics.
 GOLD-STANDARD SHAPE (~145 words — adapt every token to the prospect):
 "Robert, Tri County Human Services serves Wauchula with almost no directory presence today, and families searching Hardee County are mostly reaching other centers first. Paid search for drug rehab facility keywords is up 124% year over year, and drug rehab terms up 62%. Most operators have only a handful of channels they can advertise on, and those keep getting pricier, which makes census harder to predict when you are competing on the same auctions as everyone else in your region. Sobriety Select is a map-forward directory where families search by region and insurance, not keyword bids. Partnership means a complete profile with services, insurance, and verified reviews so inquiries are better aligned, plus a channel that complements your existing outreach instead of another paid-search auction. If a quick look makes sense for Tri County, grab a time here: https://..."
 
-SELF-CHECK before output: (1) subject ≤6 words, ≤50 chars, prospect token, no vendor pitch? (2) body 130–165 words? (3) market-pain paragraph? (4) SS identity paragraph? (5) ≥3 prospect-specific facts? (6) no SS pricing?
+SELF-CHECK before output: (1) subject ≤6 words, ≤50 chars, prospect token, no vendor pitch? (2) body 130–165 words? (3) market-pain paragraph? (4) SS identity paragraph? (5) ≥3 prospect-specific facts? (6) no SS pricing? (7) ${DRAFT_VOICE_SELF_CHECK}
 
 Output ONLY valid JSON. No preamble, no markdown fences.
 Schema: { "subject": string, "body": string, "specific_facts_used": string[] }`;
 
-export const COLD_EMAIL_EVALUATOR_SYSTEM = `You are a strict cold-email QA reviewer for addiction-treatment outbound. Score prospect-specific personalization AND structural completeness.
+export const COLD_EMAIL_EVALUATOR_SYSTEM = `You are a strict cold-email QA reviewer for addiction-treatment outbound. Score prospect-specific personalization AND structural completeness. Flag copy that reads like AI or a template.
+
+VOICE FAILURES (note in reasoning; treat as generic if severe):
+- Any em dash (—) or en dash (–) in the body.
+- Dash-as-punctuation ("clause - clause") instead of periods or commas.
+- Reading level above high school (long sentences, jargon, stiff marketing phrasing).
+- Facility name, city, owner name, or numbers that do not match prospect facts.
 
 SPECIFIC = names, places, numbers, signals, or observations unique to THIS prospect (facility name, city, review count, owner name, specific service, hiring fact, directory gap, tech-stack reference).
 GENERIC = anything that could be sent to any treatment center unchanged.
@@ -178,7 +187,7 @@ const buildSubjectHint = (lead: Lead, enrichment: Enrichment): string => {
     return `SUBJECT hint: directory gap — try "${city.toLowerCase()} families reaching competitors" or "${city.toLowerCase()} intake gap".`;
   }
   if (ownerFirst !== null && ownerFirst.length >= 3) {
-    return `SUBJECT hint: owner known — try "${ownerFirst.toLowerCase()} — ${city.toLowerCase()} family searches" or "${city.toLowerCase()} ${service} census gap".`;
+    return `SUBJECT hint: owner known — try "${ownerFirst.toLowerCase()}, ${city.toLowerCase()} family searches" or "${city.toLowerCase()} ${service} census gap".`;
   }
   return `SUBJECT hint: try "${city.toLowerCase()} intake gap" or "${city.toLowerCase()} census pipeline". Never "Increase Visibility" or brand names.`;
 };
