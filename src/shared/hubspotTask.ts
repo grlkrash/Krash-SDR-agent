@@ -20,18 +20,23 @@ export const createHubspotTask = async (opts: {
   companyId: string | null;
   draftId: string;
   touchNumber: number;
+  taskType?: 'CALL' | 'TODO';
 }): Promise<string | null> => {
   try {
+    const properties: Record<string, string> = {
+      hs_task_subject: opts.subject,
+      hs_task_body: opts.body,
+      hs_task_status: 'NOT_STARTED',
+      hs_task_priority: 'HIGH',
+      hs_timestamp: opts.dueAt.getTime().toString(),
+      hubspot_owner_id: process.env.HUBSPOT_OWNER_ID ?? '',
+    };
+    if (opts.taskType !== undefined) {
+      properties.hs_task_type = opts.taskType;
+    }
     const created = await hsRetry(() =>
       hs.crm.objects.tasks.basicApi.create({
-        properties: {
-          hs_task_subject: opts.subject,
-          hs_task_body: opts.body,
-          hs_task_status: 'NOT_STARTED',
-          hs_task_priority: 'HIGH',
-          hs_timestamp: opts.dueAt.getTime().toString(),
-          hubspot_owner_id: process.env.HUBSPOT_OWNER_ID ?? '',
-        },
+        properties,
         associations: [],
       }),
     );
