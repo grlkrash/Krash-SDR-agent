@@ -1,8 +1,15 @@
 # INSTRUCTIONS — Sobriety Select SDR Agent (SSA)
 
-**Version:** 1.3
+**Version:** 2.0
 **For:** Sonia (operator) using Cursor
-**Companion files:** `.cursorrules` (Cursor reads automatically), `CURSOR GUIDE - SDR agent v2.md` (operator manual), `PRD - SDR agent v2.md` (product contract)
+**Companion files:** `.cursorrules` (Cursor reads automatically), `CURSOR GUIDE - SDR agent v2.md` (operator manual), `PRD - SDR agent v2.md` (product contract — **v2.0**)
+
+**Changes from v1.3 (June 9, 2026 — aligns with PRD v2.0):**
+
+- **Phase 13 (new).** Post-launch operator workflows: call-first outbound cadence (`/outbound`), operator follow-up call queue (`/follow-ups`), and `/queue` triage integration. State in `AuditLog` only — no new tables.
+- **Prompt 7.5 (new).** Daily brief outbound cadence section — retro spec for `renderOutboundCadence` in daily brief.
+- **Appendix — PRD v2.0 feature map.** Maps PRD § sections to source files for everything built after Phase 12 (engagement dashboard, renewals-call, cold-call, exclusions, etc.) so Cursor can find code without guessing.
+- **Prompt 12.2 checklist** extended with outbound, follow-ups, and Google Calendar scope items.
 
 **Changes from v1.2:**
 
@@ -25,7 +32,16 @@
 1. Open Cursor in the repo. Verify it sees `.cursorrules` (ask “what rules are you following?”).
 2. Open Composer (Cmd/Ctrl+I).
 3. Copy ONE prompt block at a time. Paste. Wait for diff. Verify acceptance criteria. Commit. Move on.
-4. See `CURSOR GUIDE - SDR agent v2.md` for troubleshooting.
+4. See `CURSOR GUIDE - SDR agent v2.md` for troubleshooting and **daily operator workflow**.
+
+**Build phases:**
+
+| Phases | Scope |
+| --- | --- |
+| **0–12** | Initial service build (scaffold → deploy → tests). Written for greenfield; most of this is **already shipped**. |
+| **13+** | Post-launch increments (PRD v1.6–v2.0). Use when extending call/outbound workflows — or reference **Appendix — PRD v2.0 feature map** when fixing existing code. |
+
+For day-to-day operation (which queue to open, demo booking, follow-up scheduling), use **`CURSOR GUIDE - SDR agent v2.md`** — not this file.
 
 ---
 
@@ -881,6 +897,8 @@ STOP.
 ```
 
 **Acceptance:** Approve a draft in /queue → run `tsx src/scripts/sendApproved.ts` → email arrives at the address derived from `enrichment.ownerEmail` (or the `firstname@domain` guess fallback). DB row shows `status='sent'`, `sentAt` populated, `gmailMessageId` set (matches the `<uuid>@sobrietyselect.com` Message-ID header in Gmail), `hubspotEmailId` set. HubSpot contact (and/or company, if `lead.hubspotCompanyId` is non-null) timeline shows the new Email engagement with the subject + body. AuditLog contains `sender.sent` and `hubspotEngagement.logged`. Negative path: simulate a HubSpot outage (point HUBSPOT_ACCESS_TOKEN at garbage, re-run) → email still sends, draft still flips to `sent`, AuditLog gets `hubspotEngagement.failed` instead of crashing the cron.
+
+**v2.0 cold-send fork (PRD §9.6, implemented in Phase 13).** After a `kind='cold'` send: if `hasActiveOutboundSequence(leadId)` → `logOutboundColdEmailSent` (no legacy `/cold-call` cadence); else → `flagColdForCall(draftId)` (BD 2/5/9 post-email path).
 
 ---
 
@@ -1885,6 +1903,9 @@ Create ONLY CHECKLIST.md at repo root with these checkbox sections:
 - [ ] CAN-SPAM footer address confirmed with Mark
 - [ ] Existing-client exclusion list pulled, loaded as Suppression rows
 - [ ] /queue accessible at production URL
+- [ ] /outbound shows start candidates; can start and log call 1
+- [ ] /follow-ups surfaces a scheduled callback after setting follow-up date on a disposition
+- [ ] Google Calendar scope on GMAIL_REFRESH_TOKEN (`npx tsx src/scripts/verifyCalendarScope.ts`) OR manual demo book path works
 - [ ] /copilot/ask returns answers from KB
 - [ ] /prep-brief/:dealId works on a test deal
 - [ ] /health all green
@@ -1922,7 +1943,172 @@ STOP.
 
 ---
 
-## Appendix — Cost ceiling (first 60 days)
+## Phase 13 — Call-first outbound & follow-up queues (v2.0)
+
+These prompts document workflows shipped after Phase 12. Use them when **extending** outbound/follow-up behavior — not when operating the service day-to-day (see `CURSOR GUIDE - SDR agent v2.md`).
+
+### Prompt 13.1 — Call-first outbound cadence
+
+```
+Create ONLY src/shared/outboundSteps.ts, src/outreach/outboundSequence.ts, src/outreach/bookDiscoveryMeeting.ts, src/outreach/recordDemoMeeting.ts, src/ui/outbound.ts, AND mount outboundRouter in src/server.ts.
+
+Also create supporting shared helpers if missing: parseDemoDatetime.ts, googleCalendar.ts, googleCalendarComposeUrl.ts, hubspotDealStages.ts, ensureHubspotDeal.ts, hubspotLinks.ts, logHubspotNote.ts.
+
+PRD §9.6 — call-first path. State in AuditLog only (no Sequence table).
+
+Steps (OUTBOUND_STEPS): cold-call-1 → voicemail-1 → cold-email → cold-call-2 → demo → follow-up.
+
+Audit actions: outbound.sequence-started, outbound.task-created, outbound.touch, outbound.sequence-completed.
+
+src/outreach/outboundSequence.ts exports:
+- getOutboundSequenceState(leadId), hasActiveOutboundSequence(leadId), isReadyForColdEmailDraft(leadId)
+- startOutboundSequence(leadId) — requires phoneE164, writes sequence-started + HubSpot CALL task for call 1
+- logOutboundTouch({ leadId, step, outcome, notes?, followUpDate?, followUpNotes? })
+- logOutboundColdEmailSent(leadId) — called from sender.ts when kind='cold' sends on active outbound
+- buildOutboundRows({ limit? }), buildOutboundStartCandidates({ limit? }), countActiveOutboundSequences()
+- completeOutboundSequence(leadId, reason)
+
+Behavior:
+- Connected on cold-call-1 skips voicemail-1; ordered steps become call-1 → email → call-2 → demo → follow-up
+- maybeDraftColdEmail after VM-1 (left/skipped) or connected call-1
+- flagColdCall2: HubSpot task due BD 2 after cold email sent
+- Optional followUpDate on any touch → scheduleFollowUpTask (Prompt 13.2)
+- draftColdBatch skips leads where !isReadyForColdEmailDraft
+
+src/ui/outbound.ts:
+- GET /outbound — active sequences table + start-outreach candidates
+- POST /outbound/start/:leadId
+- POST /outbound/touch/:leadId — zod step enum + outcome + optional followUpDate/followUpNotes
+- POST /outbound/cold-sent/:leadId — manual mark when cold sent from Gmail
+- POST /outbound/book-demo/:leadId — bookDiscoveryMeeting + optional follow-up schedule
+- GET /outbound/open-calendar/:leadId — manual Google Calendar compose
+- POST /outbound/mark-demo-sent/:leadId
+- POST /outbound/deal-stage/:leadId
+
+Book demo form: client email, Eastern datetime-local, duration, notes, optional follow-up fields.
+Link to /cold-call as "Legacy post-email calls" and /follow-ups.
+
+Edit src/outreach/sender.ts (cold send fork):
+- if hasActiveOutboundSequence(lead.id) → logOutboundColdEmailSent
+- else → flagColdForCall (legacy BD 2/5/9 path)
+
+STOP.
+```
+
+**Acceptance:** Start outbound on a test lead with phone → `/outbound` shows step Cold call 1. Log connected → cold draft appears on `/queue` (or auto-drafts). Approve + send cold → sequence advances to cold-call-2 task (BD 2). Book demo with Calendar scope → invite sent, HubSpot meeting logged. Lead not on outbound sequence: cold send still opens legacy `/cold-call` cadence.
+
+---
+
+### Prompt 13.2 — Operator follow-up call queue
+
+```
+Create ONLY src/shared/parseFollowUpDate.ts, src/outreach/followUpTask.ts, src/ui/followUpQueue.ts. Mount followUpQueueRouter in src/server.ts.
+
+Edit src/shared/hubspotTask.ts to accept optional taskType: 'CALL' | 'TODO' (follow-ups use CALL).
+
+PRD §9.6 — operator-scheduled callbacks. AuditLog only — no new table.
+
+src/shared/parseFollowUpDate.ts:
+- parseFollowUpDateLocal(raw) — date-only YYYY-MM-DD → 9:00 AM US/Eastern; datetime-local → Eastern wall time via wallEtToUtcDate
+
+src/outreach/followUpTask.ts exports:
+- scheduleFollowUpTask({ leadId, dueAtLocal, context, notes? }) — throws if due not in future; audit followup-task.scheduled + HubSpot CALL task
+- buildFollowUpRows({ limit? }), countOpenFollowUps()
+- completeFollowUpTask(followUpId) — idempotent; closes HubSpot task; audit followup-task.completed
+- FollowUpRow type
+
+Queue load: if HubSpot task already COMPLETED, auto-write followup-task.completed (source: hubspot-sync).
+120-day lookback on scheduled rows. Requires lead.phoneE164.
+
+src/ui/followUpQueue.ts:
+- GET /follow-ups — table sorted by dueAt; overdue = "due now"
+- POST /follow-ups/complete/:id — optional returnTo hidden field for redirect
+
+Integrate optional follow-up fields into:
+- src/ui/outbound.ts (touch forms + book demo form) → scheduleFollowUpTask with context `${step}:${outcome}` or demo-booked
+- src/ui/coldCall.ts (Connected / No answer forms) → context cold-call:touch-N:outcome
+- src/outreach/coldCallFlag.ts logColdCallTouch — pass through followUpDate/followUpNotes
+
+STOP.
+```
+
+**Acceptance:** Disposition a call on `/outbound` with follow-up date tomorrow → row appears on `/follow-ups` with context tag. Complete → HubSpot task closed, row disappears. Same from `/cold-call`. Date-only picker schedules 9 AM ET.
+
+---
+
+### Prompt 13.3 — Queue triage: outbound + follow-up previews
+
+```
+Edit ONLY src/ui/queue.ts.
+
+PRD §9.5 triage hub (v2.0).
+
+1. Promise.all adds countActiveOutboundSequences() and countOpenFollowUps().
+2. renderTriageStrip pills: Outbound cadence → /outbound, Follow-ups to call → /follow-ups (alongside existing renewals, manual VM, etc.).
+3. Toolbar links: Outbound cadence →, Follow-ups to call →.
+4. Compact section "📅 Follow-ups to call" (top 5, FOLLOW_UPS_SECTION_LIMIT) when openFollowUps > 0 — reuse renderFollowUpCallRow pattern (Call tel link, Complete POST /follow-ups/complete/:id, Full queue →).
+5. Import buildFollowUpRows, countOpenFollowUps, FollowUpRow from followUpTask.js.
+
+Do not change draft card rendering unless prompt explicitly asks.
+
+STOP.
+```
+
+**Acceptance:** `/queue` triage strip shows outbound + follow-up counts. When follow-ups exist, preview section appears above pending drafts. Complete from preview redirects back to /queue.
+
+---
+
+### Prompt 7.5 — Daily brief outbound cadence section (v2.0)
+
+```
+Edit ONLY src/outreach/brief/outbound.ts (create if missing) AND src/outreach/dailyBrief.ts.
+
+PRD §9.8 — insert outbound section after suggested call list, before renewals.
+
+src/outreach/brief/outbound.ts:
+- OUTBOUND_BRIEF_LIMIT = 8
+- renderOutboundCadence(rows, publicUrl, openCount) → markdown section "## 📞 Outbound cadence (call-first)" with facility, phone, owner, current step label from OUTBOUND_STEP_LABELS
+
+dailyBrief.ts:
+- countActiveOutboundSequences() + buildOutboundRows({ limit: OUTBOUND_BRIEF_LIMIT })
+- Include renderOutboundCadence in body array after renderCallList, before renderRenewalsToCall
+- Add openOutboundCount to dailyBrief.sent audit meta
+
+STOP.
+```
+
+**Acceptance:** Run sendDailyBrief → brief contains outbound section when active sequences exist, with link to `/outbound`.
+
+---
+
+## Appendix — PRD v2.0 feature map
+
+Use this when fixing or extending code built **after Phase 12**. PRD section is authoritative; this table is a file index.
+
+| PRD § | Feature | Key files |
+| --- | --- | --- |
+| §9.2.1 | Directory & client exclusions | `src/pipeline/exclusions/`, `src/shared/exclusion.ts` |
+| §9.4 | Cold email quality + free-listing hook + redraft scripts | `coldEmailQuality.ts`, `leakScan.ts`, `src/scripts/redraftStaleColdPending.ts` |
+| §9.5 | Engagement dashboard + temperature badges | `emailEngagementStats.ts`, `engagementDashboard.ts`, `openTrack.ts` |
+| §9.5 | Kill lead | `killLead.ts`, `/kill-lead/:leadId` in queue.ts |
+| §9.5 | Triage lanes + nudge + awaiting reply | `queue.ts`, `draftNudge.ts`, `awaitingReply.ts` |
+| §9.6 | **Call-first outbound** | `outboundSequence.ts`, `ui/outbound.ts`, `outboundSteps.ts`, `bookDiscoveryMeeting.ts` |
+| §9.6 | **Operator follow-ups** | `followUpTask.ts`, `ui/followUpQueue.ts`, `parseFollowUpDate.ts` |
+| §9.6 | Legacy post-email cold calls (BD 2/5/9) | `coldCallFlag.ts`, `ui/coldCall.ts`, `coldCallTouches.ts` |
+| §9.6 | Meeting attribution + book rate | `meetingAttribution.ts` |
+| §9.5 | Call disposition sync | `callDispositionSync.ts` |
+| §9.8 | Meeting follow-ups (passed meetings) | `meetingFollowup.ts` |
+| §9.10 | Renewal live-call cadence | `renewalCallFlag.ts`, `ui/renewalsCall.ts` |
+| §9.10 | Reactivation manual call (vm paused) | `reactivationCallFlag.ts` |
+| §9.9 | Voicemail (paused) | `voicemail.ts`, `cronSchedule.ts` (disabled jobs) |
+| §9.11 | Prep brief + free-listing pivot | `prepBrief.ts`, `ui/prepBrief.ts` |
+| §9.14 | Smoke-test lanes | `smokeTestLead.ts`, `seedSmokeTestLanes.ts` |
+
+**Cold send fork (`sender.ts`):** active outbound → `logOutboundColdEmailSent`; else → `flagColdForCall`.
+
+**No Sequence table anywhere.** Outbound, follow-ups, renewal calls, and legacy cold calls all derive state from `AuditLog` (+ HubSpot task mirror).
+
+---
 
 
 | Item                               | Monthly cap     |
