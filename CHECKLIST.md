@@ -13,6 +13,9 @@
 - [ ] CAN-SPAM footer address confirmed with Mark
 - [ ] Existing-client exclusion list pulled, loaded as Suppression rows
 - [ ] /queue accessible at production URL
+- [ ] /outbound — start outreach + log call 1 on a test lead
+- [ ] /follow-ups — scheduled callback appears after setting follow-up date on a disposition
+- [ ] Google Calendar scope verified (`npx tsx src/scripts/verifyCalendarScope.ts`) OR manual demo book path on /outbound works
 - [ ] /copilot/ask returns answers from KB
 - [ ] /prep-brief/:dealId works on a test deal
 - [ ] /health all green
