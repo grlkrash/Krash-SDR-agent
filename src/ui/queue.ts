@@ -28,6 +28,11 @@ import {
   countOpenRenewalCalls,
   type RenewalCallRow,
 } from '../outreach/renewalCallFlag.js';
+import {
+  buildFollowUpRows,
+  countOpenFollowUps,
+  type FollowUpRow,
+} from '../outreach/followUpTask.js';
 import { flagColdForCall } from '../outreach/coldCallFlag.js';
 import {
   countActiveOutboundSequences,
@@ -74,6 +79,7 @@ const matchesLane = (kind: string, lane: LaneMode): boolean => {
 };
 
 const RENEWALS_SECTION_LIMIT = 5;
+const FOLLOW_UPS_SECTION_LIMIT = 5;
 
 const PAGE_SIZE = 30;
 // We fetch a window larger than the page so sort=value can rank the full
@@ -261,6 +267,26 @@ const renderPhoneLine = (lead: Lead, kind: string): string => {
   return `<div class="phone-line">📞 <a href="tel:${escapeHtml(lead.phoneE164)}">${escapeHtml(display)}</a></div>`;
 };
 
+const renderFollowUpCallRow = (r: FollowUpRow): string => {
+  const owner = r.ownerName ?? '—';
+  const due = r.dueAt.getTime() <= Date.now() ? 'due now' : r.dueAt.toISOString().slice(0, 16).replace('T', ' ');
+  return `
+  <div class="undo-row renewal-row">
+    <div class="undo-info">
+      <span class="lead-name-sm">${escapeHtml(r.facility)}</span>
+      <span class="undo-meta">${escapeHtml(r.city)}, ${escapeHtml(r.state)} · ${escapeHtml(due)} · ${escapeHtml(owner)}</span>
+    </div>
+    <div class="undo-actions">
+      <a class="btn-undo" href="tel:${escapeHtml(r.phoneE164)}" style="text-decoration:none;display:inline-block">Call</a>
+      <form method="POST" action="/follow-ups/complete/${encodeURIComponent(r.followUpId)}" style="display:inline">
+        <input type="hidden" name="returnTo" value="/queue" />
+        <button type="submit" class="btn-undo" style="background:#16a34a">Complete</button>
+      </form>
+      <a class="btn-undo" href="/follow-ups" style="text-decoration:none;display:inline-block;background:#0f766e">Full queue</a>
+    </div>
+  </div>`;
+};
+
 const renderRenewalCallRow = (r: RenewalCallRow): string => {
   const owner = r.ownerName ?? '—';
   const touch = r.nextTouchNumber === null
@@ -284,6 +310,7 @@ const renderTriageStrip = (counts: {
   approved: number;
   outbound: number;
   renewalsCall: number;
+  followUps: number;
   manualVm: number;
   awaitingReply: number;
   lane: LaneMode;
@@ -297,6 +324,7 @@ const renderTriageStrip = (counts: {
     ${pill(laneQs('all'), 'Pending emails', counts.pending, counts.lane === 'all')}
     ${pill('/outbound', 'Outbound cadence', counts.outbound, false)}
     ${pill('/renewals-call', 'Renewals to call', counts.renewalsCall, false)}
+    ${pill('/follow-ups', 'Follow-ups to call', counts.followUps, false)}
     ${pill('/manual-vm-queue', 'Manual VM', counts.manualVm, false)}
     ${pill(`${laneQs('all')}#awaiting-reply`, 'Awaiting reply', counts.awaitingReply, false)}
     ${pill(laneQs('all'), 'Approved', counts.approved, false)}
@@ -930,12 +958,14 @@ const renderPage = (
   awaitingReply: AwaitingReplyLead[],
   pausedRejected: DraftWithRel[],
   renewalCalls: RenewalCallRow[],
+  followUpCalls: FollowUpRow[],
   totalPending: number,
   totalPendingLane: number,
   totalApproved: number,
   totalAwaitingReply: number,
   totalPausedRejected: number,
   openRenewalsCall: number,
+  openFollowUps: number,
   openManualVm: number,
   openOutbound: number,
   sortMode: 'newest' | 'value',
@@ -998,6 +1028,15 @@ const renderPage = (
       <a href="/renewals-call" style="font-size:13px;font-weight:500;margin-left:8px">Full queue →</a></h2>
     ${renewalCalls.map((r) => renderRenewalCallRow(r)).join('\n')}
   </section>`;
+  const followUpsSection =
+    openFollowUps === 0
+      ? ''
+      : `
+  <section class="queue-section" id="follow-ups">
+    <h2 class="section-title">📅 Follow-ups to call <span class="count">(${openFollowUps})</span>
+      <a href="/follow-ups" style="font-size:13px;font-weight:500;margin-left:8px">Full queue →</a></h2>
+    ${followUpCalls.map((r) => renderFollowUpCallRow(r)).join('\n')}
+  </section>`;
 
   return `<!doctype html>
 <html lang="en">
@@ -1014,6 +1053,7 @@ const renderPage = (
     approved: totalApproved,
     outbound: openOutbound,
     renewalsCall: openRenewalsCall,
+    followUps: openFollowUps,
     manualVm: openManualVm,
     awaitingReply: totalAwaitingReply,
     lane: laneMode,
@@ -1029,6 +1069,7 @@ const renderPage = (
     <a href="/outbound" style="font-size:14px;margin-right:12px;">Outbound cadence →</a>
     <a href="/copilot" style="font-size:14px;margin-right:12px;">Sales co-pilot →</a>
     <a href="/renewals-call" style="font-size:14px;margin-right:12px;">Renewals to call →</a>
+    <a href="/follow-ups" style="font-size:14px;margin-right:12px;">Follow-ups to call →</a>
     <a href="/manual-vm-queue" style="font-size:14px;margin-right:12px;">Manual VM queue →</a>
     <form method="get" action="/queue">
       ${laneHidden}${periodHidden}
@@ -1045,6 +1086,7 @@ const renderPage = (
     <span id="approve-all-status" class="approve-status"></span>
   </div>
   ${renewalsSection}
+  ${followUpsSection}
   <section class="queue-section">
     <h2 class="section-title">📋 ${escapeHtml(pendingLabel)} <span class="count">(${totalPendingLane}${laneMode === 'all' ? '' : ` of ${totalPending}`})</span></h2>
     ${renderLaneFilters(laneMode, sortMode, engagementPeriod)}
@@ -1098,6 +1140,7 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
     openRenewalsCall,
     openManualVm,
     openOutbound,
+    openFollowUps,
   ] = await Promise.all([
     prisma.draft.findMany({
       where: { status: 'pending' },
@@ -1137,8 +1180,10 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
     countOpenRenewalCalls(),
     countOpenManualVm(),
     countActiveOutboundSequences(),
+    countOpenFollowUps(),
   ]);
   const renewalCallRows = await buildRenewalCallRows({ limit: RENEWALS_SECTION_LIMIT });
+  const followUpCallRows = await buildFollowUpRows({ limit: FOLLOW_UPS_SECTION_LIMIT });
   const orderedPending =
     sortMode === 'value'
       ? [...pendingRows].sort((a, b) => commissionForDraft(b) - commissionForDraft(a))
@@ -1171,12 +1216,14 @@ queueRouter.get('/queue', queueAuth, async (req, res) => {
         visibleAwaitingReply,
         visiblePausedRejected,
         renewalCallRows,
+        followUpCallRows,
         totalPending,
         laneFilteredPending.length,
         totalApproved,
         totalAwaitingReply,
         totalPausedRejected,
         openRenewalsCall,
+        openFollowUps,
         openManualVm,
         openOutbound,
         sortMode,
