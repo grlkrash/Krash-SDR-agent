@@ -50,6 +50,9 @@ const pageStyles = `
   .empty { color: #64748b; padding: 24px 0; }
   .disclaimer { background: #eff6ff; border: 1px solid #93c5fd; padding: 10px; border-radius: 8px;
     font-size: 13px; margin-bottom: 16px; }
+  .follow-up-fields { margin-top: 6px; padding: 6px; border: 1px dashed #cbd5e1; border-radius: 6px; font-size: 12px; }
+  .follow-up-fields label { display: block; color: #475569; margin: 2px 0; }
+  .follow-up-fields input[type="datetime-local"], .follow-up-fields input[type="text"] { font-size: 12px; padding: 3px 5px; width: 100%; box-sizing: border-box; }
 `;
 
 const renderRow = (r: Awaited<ReturnType<typeof buildColdCallRows>>[number]): string => {
@@ -72,15 +75,15 @@ const renderRow = (r: Awaited<ReturnType<typeof buildColdCallRows>>[number]): st
     <td>Email sent ${escapeHtml(r.sentAt.toISOString().slice(0, 10))}<br/>${windowTag}</td>
     <td>${escapeHtml(touch)}</td>
     <td>
-      <form method="POST" action="/cold-call/touch/${encodeURIComponent(r.draftId)}" style="display:inline">
-        <input type="hidden" name="outcome" value="connected" />
+      <form method="POST" action="/cold-call/touch/${encodeURIComponent(r.draftId)}">
         <input type="hidden" name="touchNumber" value="${escapeHtml(touchNumber)}" />
-        <button type="submit" class="btn btn-connected" title="Log connected call — closes sequence">✓ Connected</button>
-      </form>
-      <form method="POST" action="/cold-call/touch/${encodeURIComponent(r.draftId)}" style="display:inline">
-        <input type="hidden" name="outcome" value="no-answer" />
-        <input type="hidden" name="touchNumber" value="${escapeHtml(touchNumber)}" />
-        <button type="submit" class="btn btn-no-answer">No answer</button>
+        <div class="follow-up-fields">
+          <label>Follow-up when (optional — Eastern)</label>
+          <input type="datetime-local" name="followUpDate" />
+          <input type="text" name="followUpNotes" placeholder="Callback note" style="margin-top:4px" />
+        </div>
+        <button type="submit" class="btn btn-connected" name="outcome" value="connected" title="Log connected call — closes sequence">✓ Connected</button>
+        <button type="submit" class="btn btn-no-answer" name="outcome" value="no-answer">No answer</button>
       </form>
       <form method="POST" action="/cold-call/complete/${encodeURIComponent(r.draftId)}" style="display:inline"
         onsubmit="return confirm('Close this cold-call sequence without logging another touch?')">
@@ -107,6 +110,7 @@ coldCallRouter.get('/cold-call', queueAuth, async (_req, res) => {
   <div class="disclaimer">Lead with the free Sobriety Select profile; keep paid tiers for the booked call. <strong>Connected</strong> closes the sequence and logs a HubSpot call. <strong>No answer</strong> logs the attempt and keeps the cadence going. <strong>Done</strong> closes the sequence.</div>
   <div class="toolbar">
     <a href="/queue">← Draft queue</a>
+    <a href="/follow-ups">Follow-ups to call</a>
   </div>
   <table>
     <thead><tr>
@@ -125,7 +129,9 @@ coldCallRouter.post('/cold-call/touch/:id', queueAuth, async (req, res) => {
   }
   const outcome = req.body.outcome === 'connected' ? 'connected' : 'no-answer';
   const touchNumber = readTouchNumber(req.body.touchNumber);
-  await logColdCallTouch({ draftId: id, touchNumber, outcome });
+  const followUpDate = typeof req.body.followUpDate === 'string' ? req.body.followUpDate : undefined;
+  const followUpNotes = typeof req.body.followUpNotes === 'string' ? req.body.followUpNotes : undefined;
+  await logColdCallTouch({ draftId: id, touchNumber, outcome, followUpDate, followUpNotes });
   res.redirect(303, '/cold-call');
 });
 

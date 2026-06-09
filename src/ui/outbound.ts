@@ -20,6 +20,7 @@ import {
   type DealStageOption,
 } from '../shared/hubspotDealStages.js';
 import { ensureDealForLead } from '../shared/ensureHubspotDeal.js';
+import { scheduleFollowUpTask } from '../outreach/followUpTask.js';
 import {
   OUTBOUND_STEP_HINTS,
   OUTBOUND_STEP_LABELS,
@@ -73,10 +74,16 @@ const pageStyles = `
   .book-form { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; margin-top: 8px; }
   .book-form label { display: block; font-size: 12px; color: #475569; margin: 6px 0 2px; }
   .book-form input, .book-form select { font-size: 13px; padding: 4px 6px; }
+  .followup-form { background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 10px; margin-top: 8px; }
+  .followup-form label { display: block; font-size: 12px; color: #475569; margin: 6px 0 2px; }
+  .followup-form input, .followup-form textarea { font-size: 13px; padding: 4px 6px; width: 100%; box-sizing: border-box; }
   .flash { background: #ecfdf5; border: 1px solid #6ee7b7; padding: 10px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
   .flash-warn { background: #fffbeb; border: 1px solid #fcd34d; }
   .phone-links a { display: inline-block; margin-right: 8px; font-weight: 600; }
   .deal-stage-form select { font-size: 12px; max-width: 220px; }
+  .follow-up-fields { margin-top: 8px; padding: 8px; border: 1px dashed #cbd5e1; border-radius: 6px; background: #fafafa; }
+  .follow-up-fields label { display: block; font-size: 12px; color: #475569; margin: 4px 0 2px; }
+  .follow-up-fields input[type="datetime-local"], .follow-up-fields input[type="text"] { font-size: 13px; padding: 4px 6px; width: 100%; box-sizing: border-box; }
 `;
 
 const renderPhoneCell = (r: {
@@ -120,6 +127,7 @@ const renderBookDemoForm = (
         <option value="45">45 min</option>
       </select>
       ${notesField('bookNotes')}
+      ${renderFollowUpFields()}
       <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;align-items:center">
         ${autoBtn}
         <button class="btn btn-muted" type="submit" formaction="${escapeHtml(openCalAction)}" formmethod="get" formtarget="_blank">Open Google Calendar ↗</button>
@@ -150,6 +158,14 @@ const renderDealStageForm = (
 const notesField = (name = 'notes'): string =>
   `<textarea class="notes" name="${name}" placeholder="What did you talk about? (saved to HubSpot notes)"></textarea>`;
 
+const renderFollowUpFields = (): string => `<div class="follow-up-fields">
+  <label>Follow-up when (optional — Eastern time)</label>
+  <input type="datetime-local" name="followUpDate" />
+  <label>Follow-up note</label>
+  <input type="text" name="followUpNotes" placeholder="e.g. Owner traveling — call Thursday afternoon" />
+  <span class="meta">Creates a HubSpot call task and surfaces on <a href="/follow-ups">/follow-ups</a>.</span>
+</div>`;
+
 const renderStepActions = (
   r: Awaited<ReturnType<typeof buildOutboundRows>>[number],
   calendarOk: boolean,
@@ -164,6 +180,7 @@ const renderStepActions = (
     return `<form method="POST" action="${base}">
       <input type="hidden" name="step" value="cold-call-1" />
       ${notesField()}
+      ${renderFollowUpFields()}
       <button class="btn btn-connected" name="outcome" value="connected">Connected</button>
       <button class="btn btn-muted" name="outcome" value="no-answer">No answer</button>
     </form>${prep}`;
@@ -194,6 +211,7 @@ const renderStepActions = (
     return `<form method="POST" action="${base}">
       <input type="hidden" name="step" value="cold-call-2" />
       ${notesField()}
+      ${renderFollowUpFields()}
       <button class="btn btn-connected" name="outcome" value="connected">Connected</button>
       <button class="btn btn-muted" name="outcome" value="no-answer">No answer</button>
     </form>
@@ -210,6 +228,7 @@ const renderStepActions = (
       <form method="POST" action="${base}" style="margin-top:8px">
         <input type="hidden" name="step" value="demo" />
         ${notesField()}
+        ${renderFollowUpFields()}
         <button class="btn btn-connected" name="outcome" value="completed">Demo held</button>
         <button class="btn btn-muted" name="outcome" value="no-show">No-show</button>
       </form>`;
@@ -218,6 +237,7 @@ const renderStepActions = (
   return `<form method="POST" action="${base}">
     <input type="hidden" name="step" value="follow-up" />
     ${notesField()}
+    ${renderFollowUpFields()}
     <a href="/queue?lane=replies" class="btn btn-primary" style="text-decoration:none;display:inline-block">Reply drafts</a>
     <button class="btn btn-connected" name="outcome" value="done">Follow-up done</button>
   </form>`;
@@ -293,6 +313,7 @@ outboundRouter.get('/outbound', queueAuth, async (req, res) => {
   <div class="toolbar">
     <a href="/queue">← Draft queue</a>
     <a href="/cold-call">Legacy post-email calls</a>
+    <a href="/follow-ups">Follow-ups to call</a>
   </div>
 
   <h2>Active sequences (${String(rows.length)})</h2>
@@ -334,7 +355,36 @@ const TouchSchema = z.object({
   ]),
   outcome: z.string().min(1),
   notes: z.string().optional(),
+  followUpDate: z.string().optional(),
+  followUpNotes: z.string().optional(),
 });
+
+const readOptionalFollowUp = (raw: {
+  followUpDate?: string;
+  followUpNotes?: string;
+}): { followUpDate?: string; followUpNotes?: string } => {
+  const followUpDate = raw.followUpDate?.trim() ?? '';
+  if (followUpDate === '') return {};
+  return {
+    followUpDate,
+    followUpNotes: raw.followUpNotes?.trim() ?? '',
+  };
+};
+
+const maybeScheduleFollowUp = async (
+  leadId: string,
+  context: string,
+  raw: { followUpDate?: string; followUpNotes?: string },
+): Promise<void> => {
+  const followUp = readOptionalFollowUp(raw);
+  if (followUp.followUpDate === undefined) return;
+  await scheduleFollowUpTask({
+    leadId,
+    dueAtLocal: followUp.followUpDate,
+    context,
+    notes: followUp.followUpNotes,
+  });
+};
 
 outboundRouter.post('/outbound/touch/:leadId', queueAuth, async (req, res) => {
   const leadId = readLeadId(req);
@@ -353,6 +403,7 @@ outboundRouter.post('/outbound/touch/:leadId', queueAuth, async (req, res) => {
       step: parsed.data.step as OutboundStep,
       outcome: parsed.data.outcome,
       notes: parsed.data.notes,
+      ...readOptionalFollowUp(parsed.data),
     });
     res.redirect(303, '/outbound');
   } catch (err) {
@@ -399,6 +450,10 @@ outboundRouter.post('/outbound/book-demo/:leadId', queueAuth, async (req, res) =
       attendeeEmail: parsed.data.attendeeEmail,
       durationMinutes: parsed.data.durationMinutes,
       notes: parsed.data.bookNotes,
+    });
+    await maybeScheduleFollowUp(leadId, 'demo-booked', {
+      followUpDate: typeof req.body.followUpDate === 'string' ? req.body.followUpDate : undefined,
+      followUpNotes: typeof req.body.followUpNotes === 'string' ? req.body.followUpNotes : undefined,
     });
     const params = new URLSearchParams({ booked: '1', email: result.attendeeEmail });
     if (result.meetUrl !== null) params.set('meet', result.meetUrl);
@@ -474,6 +529,10 @@ outboundRouter.post('/outbound/mark-demo-sent/:leadId', queueAuth, async (req, r
       attendeeEmail: fields.attendeeEmail,
       durationMinutes: fields.durationMinutes,
       notes: fields.bookNotes,
+    });
+    await maybeScheduleFollowUp(leadId, 'demo-booked-manual', {
+      followUpDate: typeof req.body.followUpDate === 'string' ? req.body.followUpDate : undefined,
+      followUpNotes: typeof req.body.followUpNotes === 'string' ? req.body.followUpNotes : undefined,
     });
     const params = new URLSearchParams({ booked: '1', email: result.attendeeEmail, manual: '1' });
     res.redirect(303, `/outbound?${params.toString()}`);
