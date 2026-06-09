@@ -13,6 +13,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { hs, hsRetry } from '../shared/hubspot.js';
 import { completeHubspotTask, createHubspotTask } from '../shared/hubspotTask.js';
+import { scheduleFollowUpTask } from './followUpTask.js';
 import { logHubspotOutboundCall } from '../shared/logHubspotCall.js';
 import {
   COLD_CALL_MAX_TOUCHES,
@@ -254,6 +255,8 @@ export const logColdCallTouch = async (opts: {
   draftId: string;
   touchNumber: number;
   outcome: 'connected' | 'no-answer';
+  followUpDate?: string;
+  followUpNotes?: string;
 }): Promise<{ touchNumber: number | null; completed: boolean }> => {
   const draft = await prisma.draft.findUnique({
     where: { id: opts.draftId },
@@ -294,6 +297,16 @@ export const logColdCallTouch = async (opts: {
 
   if (taskId !== null) {
     await completeHubspotTask({ taskId, draftId: opts.draftId });
+  }
+
+  const followUpDate = opts.followUpDate?.trim() ?? '';
+  if (followUpDate !== '') {
+    await scheduleFollowUpTask({
+      leadId: draft.leadId,
+      dueAtLocal: followUpDate,
+      context: `cold-call:touch-${String(opts.touchNumber)}:${opts.outcome}`,
+      notes: opts.followUpNotes,
+    });
   }
 
   if (opts.outcome === 'connected') {

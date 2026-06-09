@@ -20,6 +20,7 @@ import { getDealStageForLead } from '../shared/hubspotDealStages.js';
 import { resolveHubspotCallTarget } from '../shared/hubspotLinks.js';
 import { isSmokeTestLeadRecord } from '../shared/smokeTestLead.js';
 import { draftColdEmail } from './draftCold.js';
+import { scheduleFollowUpTask } from './followUpTask.js';
 import { callHint, formatPhoneForDisplay } from './brief/shared.js';
 
 const MS_PER_DAY = 86_400_000;
@@ -285,6 +286,8 @@ export const logOutboundTouch = async (opts: {
   step: OutboundStep;
   outcome: string;
   notes?: string;
+  followUpDate?: string;
+  followUpNotes?: string;
 }): Promise<LogOutboundTouchResult> => {
   const state = await getOutboundSequenceState(opts.leadId);
   if (state.status !== 'active') {
@@ -345,6 +348,16 @@ export const logOutboundTouch = async (opts: {
 
   if (opts.step === 'follow-up' && opts.outcome === 'done') {
     await completeOutboundSequence(opts.leadId, 'follow-up-complete');
+  }
+
+  const followUpDate = opts.followUpDate?.trim() ?? '';
+  if (followUpDate !== '') {
+    await scheduleFollowUpTask({
+      leadId: opts.leadId,
+      dueAtLocal: followUpDate,
+      context: `${opts.step}:${opts.outcome}`,
+      notes: opts.followUpNotes,
+    });
   }
 
   return { step: opts.step, draftId };
