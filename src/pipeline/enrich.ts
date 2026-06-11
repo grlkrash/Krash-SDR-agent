@@ -69,6 +69,11 @@ const callAnalyzer = async (
   return (await tryOnce('')) ?? (await tryOnce('\n\nOutput ONLY raw JSON, no preamble, no fences.'));
 };
 
+export const refreshEnrichment = async (leadId: string): Promise<void> => {
+  await prisma.enrichment.deleteMany({ where: { leadId } });
+  await enrichLead(leadId);
+};
+
 export const enrichLead = async (leadId: string): Promise<void> => {
   const lead = await prisma.lead.findUnique({ where: { id: leadId }, include: { enrichment: true } });
   if (!lead || lead.enrichment) return;

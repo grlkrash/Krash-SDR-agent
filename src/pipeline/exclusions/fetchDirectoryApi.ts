@@ -88,6 +88,58 @@ const fetchBySubscriptionType = async (
   return out;
 };
 
+const CatalogHitSchema = z.object({
+  slug: z.string(),
+  title: z.string(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  address: z.string().optional(),
+  subscriptionType: z.string(),
+  website: z.string().nullable().optional(),
+});
+
+export type DirectorySearchHit = {
+  slug: string;
+  name: string;
+  city: string | null;
+  state: string | null;
+  address: string | null;
+  subscriptionType: string;
+  website: string | null;
+};
+
+/** Search the SS directory catalog by facility name (all subscription tiers). */
+export const searchDirectoryByName = async (
+  query: string,
+  limit = 8,
+): Promise<DirectorySearchHit[]> => {
+  const q = query.trim();
+  if (q === '') return [];
+
+  const params = new URLSearchParams({
+    q,
+    limit: String(limit),
+    offset: '0',
+  });
+  const res = await fetch(`${BASE_URL}?${params.toString()}`, {
+    headers: { 'User-Agent': USER_AGENT },
+  });
+  if (!res.ok) {
+    throw new Error(`Directory name search failed ${res.status}`);
+  }
+
+  const parsed = z.object({ hits: z.array(CatalogHitSchema) }).parse(await res.json());
+  return parsed.hits.map((hit) => ({
+    slug: hit.slug,
+    name: hit.title,
+    city: hit.city ?? null,
+    state: normalizeUsState(hit.state ?? '') ?? hit.state ?? null,
+    address: hit.address ?? null,
+    subscriptionType: hit.subscriptionType,
+    website: hit.website ?? null,
+  }));
+};
+
 /** All Sobriety Select verified / partner listings (subscribe + promoted ads). */
 export const fetchVerifiedDirectoryListings = async (): Promise<DirectoryListing[]> => {
   const bySlug = new Map<string, DirectoryListing>();

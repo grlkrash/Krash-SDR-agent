@@ -335,6 +335,20 @@ const generateBriefCore = async (
   return { markdown, leadName: lead.name, leadId: lead.id, dealId };
 };
 
+/** Prep brief from DB only — no HubSpot deal/company creation (intel lookup path). */
+export const generatePrepBriefIntel = async (leadId: string): Promise<PrepBriefResult> => {
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    include: { enrichment: true },
+  });
+  if (lead === null) throw new Error(`Lead not found: ${leadId}`);
+  const { enrichment, ...leadOnly } = lead;
+  if (enrichment === null) {
+    throw new Error(`Lead ${leadId} has no enrichment — run pipeline/enrich first`);
+  }
+  return generateBriefCore(leadOnly, enrichment, null);
+};
+
 export const generatePrepBriefForLead = async (leadId: string): Promise<PrepBriefResult> => {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId },

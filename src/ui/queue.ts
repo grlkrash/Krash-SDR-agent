@@ -1067,6 +1067,7 @@ const renderPage = (
   <div class="top-meta">${totalPendingLane} shown · ${totalApproved} approved &amp; ready to send${awaitingReplyMeta}${undoMeta}</div>
   <div class="toolbar">
     <a href="/outbound" style="font-size:14px;margin-right:12px;">Outbound cadence →</a>
+    <a href="/intel" style="font-size:14px;margin-right:12px;font-weight:600;">Demo intel →</a>
     <a href="/copilot" style="font-size:14px;margin-right:12px;">Sales co-pilot →</a>
     <a href="/renewals-call" style="font-size:14px;margin-right:12px;">Renewals to call →</a>
     <a href="/follow-ups" style="font-size:14px;margin-right:12px;">Follow-ups to call →</a>

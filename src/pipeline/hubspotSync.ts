@@ -207,6 +207,33 @@ const associateContactWithCompany = async (
   );
 };
 
+/** Push enrichment fields onto an existing HubSpot company (intel lookup path). */
+export const updateHubSpotCompanyFromLead = async (
+  companyId: string,
+  leadId: string,
+): Promise<void> => {
+  const lead = await prisma.lead.findUnique({
+    where: { id: leadId },
+    include: { enrichment: true },
+  });
+  if (lead === null) throw new Error(`hubspotSync: lead not found: ${leadId}`);
+  const enrichment = lead.enrichment;
+  if (enrichment === null) {
+    throw new Error(`hubspotSync: enrichment missing for ${leadId}`);
+  }
+
+  const domain = extractDomain(lead.website) ?? '';
+  const companyProps = buildCompanyProperties(lead, enrichment, domain);
+  await paced(() =>
+    hs.crm.companies.basicApi.update(companyId, { properties: companyProps }),
+  );
+
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: { hubspotCompanyId: companyId },
+  });
+};
+
 export const syncLeadToHubspot = async (
   leadId: string,
 ): Promise<{ companyId: string; contactId: string | null }> => {
