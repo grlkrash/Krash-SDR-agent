@@ -3,7 +3,11 @@
 // The ~9k "unsubscribe" rows are searchable catalog inventory, not SS clients.
 
 import { z } from 'zod';
+import { extractDomain } from '../../shared/domain.js';
+import { normalizeName } from '../../shared/lead.js';
 import { normalizeUsState } from './parseScrapedLabel.js';
+
+const MIN_NAME_OVERLAP_LEN = 10;
 
 const BASE_URL = 'https://sobrietyselect.com/api/medical-centers/search';
 const USER_AGENT = 'Sobriety Select Research/1.0 (sonia@sobrietyselect.com)';
@@ -106,6 +110,94 @@ export type DirectorySearchHit = {
   address: string | null;
   subscriptionType: string;
   website: string | null;
+};
+
+const normalizeStateAbbrev = (raw: string | null | undefined): string => {
+  if (raw === null || raw === undefined || raw.trim() === '') return '';
+  const abbr = normalizeUsState(raw);
+  return (abbr ?? raw).toUpperCase().slice(0, 2);
+};
+
+const citiesMatch = (facilityCity: string, hitCity: string | null): boolean => {
+  if (hitCity === null || hitCity.trim() === '') return true;
+  const fc = facilityCity.toLowerCase().trim();
+  if (fc === '' || fc === 'unknown') return true;
+  const hc = hitCity.toLowerCase().trim();
+  const hitCityToken = hc.split(' ')[0] ?? hc;
+  return fc === hc || hc.startsWith(fc) || fc.startsWith(hitCityToken);
+};
+
+const statesMatch = (facilityState: string, hitState: string | null): boolean => {
+  if (facilityState === '' || facilityState === 'XX') return true;
+  if (hitState === null || hitState.trim() === '') return true;
+  return normalizeStateAbbrev(facilityState) === normalizeStateAbbrev(hitState);
+};
+
+const namesMatch = (facilityName: string, hitName: string): boolean => {
+  const a = normalizeName(facilityName);
+  const b = normalizeName(hitName);
+  if (a === b) return true;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  if (shorter.length < MIN_NAME_OVERLAP_LEN) return false;
+  return longer.includes(shorter);
+};
+
+const slugMatchesDomain = (slug: string, domain: string): boolean => {
+  const stem = domain.split('.')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (stem.length < 6) return false;
+  const slugNorm = slug.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return slugNorm.includes(stem);
+};
+
+export type DirectoryFacilityRef = {
+  name: string;
+  website: string | null;
+  city: string;
+  state: string;
+};
+
+/** True when a Meilisearch hit is actually the facility being looked up — not a fuzzy neighbor. */
+export const directoryHitMatchesFacility = (
+  hit: DirectorySearchHit,
+  facility: DirectoryFacilityRef,
+): boolean => {
+  const facilityDomain = extractDomain(facility.website);
+  const hitDomain = extractDomain(hit.website);
+  if (facilityDomain !== null && hitDomain !== null && facilityDomain === hitDomain) {
+    return true;
+  }
+
+  if (facilityDomain !== null && slugMatchesDomain(hit.slug, facilityDomain)) {
+    return citiesMatch(facility.city, hit.city) && statesMatch(facility.state, hit.state);
+  }
+
+  if (!namesMatch(facility.name, hit.name)) return false;
+  return citiesMatch(facility.city, hit.city) && statesMatch(facility.state, hit.state);
+};
+
+export const filterDirectoryHitsForFacility = (
+  hits: DirectorySearchHit[],
+  facility: DirectoryFacilityRef,
+): DirectorySearchHit[] => hits.filter((hit) => directoryHitMatchesFacility(hit, facility));
+
+/**
+ * Resolve this facility's SS directory listing. Domain search first (exact), then
+ * name search with strict post-filter — raw Meilisearch hits are too fuzzy.
+ */
+export const lookupDirectoryForFacility = async (
+  facility: DirectoryFacilityRef,
+): Promise<DirectorySearchHit[]> => {
+  const domain = extractDomain(facility.website);
+  if (domain !== null) {
+    const domainHits = await searchDirectoryByName(domain, 5);
+    if (domainHits.length === 1) return domainHits;
+    const domainFiltered = filterDirectoryHitsForFacility(domainHits, facility);
+    if (domainFiltered.length > 0) return domainFiltered;
+  }
+
+  const nameHits = await searchDirectoryByName(facility.name, 12);
+  return filterDirectoryHitsForFacility(nameHits, facility);
 };
 
 /** Search the SS directory catalog by facility name (all subscription tiers). */

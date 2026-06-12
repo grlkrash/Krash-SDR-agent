@@ -10,7 +10,7 @@ import { extractDomain } from '../shared/domain.js';
 import { fetchSite } from '../shared/fetchSite.js';
 import { normalizeName, toE164 } from '../shared/lead.js';
 import { enrichLead } from './enrich.js';
-import { searchDirectoryByName, type DirectorySearchHit } from './exclusions/fetchDirectoryApi.js';
+import { lookupDirectoryForFacility, type DirectorySearchHit } from './exclusions/fetchDirectoryApi.js';
 import { lookupPlace } from './placesLookup.js';
 import { detectSignals, type Signals } from './signals.js';
 
@@ -257,7 +257,12 @@ export const runIntelLookup = async (input: IntelInput): Promise<IntelLookupResu
     });
   }
 
-  const directoryHits = await searchDirectoryByName(resolved.name);
+  const directoryHits = await lookupDirectoryForFacility({
+    name: resolved.name,
+    website: resolved.website,
+    city: resolved.city,
+    state: resolved.state,
+  });
   const enrichment = await ensureIntelEnrichment(lead.id, refresh);
   const { markdown } = await generatePrepBriefIntel(lead.id);
 

@@ -67,14 +67,13 @@ const tierLabel = (sub: string): string => {
 
 const renderDirectoryRows = (hits: DirectorySearchHit[]): string => {
   if (hits.length === 0) {
-    return '<span class="pill pill-no">No SS directory match</span>';
+    return '<span class="pill pill-no">Not listed on SS directory</span>';
   }
-  return hits.slice(0, 5).map((h) => {
-    const loc = [h.city, h.state].filter(Boolean).join(', ');
-    const tier = tierLabel(h.subscriptionType);
-    const cls = h.subscriptionType === 'subscribe' || h.subscriptionType === 'ads' ? 'pill-yes' : 'pill';
-    return `<span class="pill ${cls}">${escapeHtml(h.name)}${loc !== '' ? ` · ${escapeHtml(loc)}` : ''} — ${escapeHtml(tier)}</span>`;
-  }).join('');
+  const h = hits[0];
+  const loc = [h.city, h.state].filter(Boolean).join(', ');
+  const tier = tierLabel(h.subscriptionType);
+  const cls = h.subscriptionType === 'subscribe' || h.subscriptionType === 'ads' ? 'pill-yes' : 'pill';
+  return `<span class="pill ${cls}">${escapeHtml(h.name)}${loc !== '' ? ` · ${escapeHtml(loc)}` : ''} — ${escapeHtml(tier)}</span>`;
 };
 
 const renderSignalsPanel = (
