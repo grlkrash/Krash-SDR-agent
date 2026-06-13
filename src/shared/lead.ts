@@ -49,7 +49,7 @@ const normalizeZip = (zip: string | null | undefined): string =>
   (zip ?? '').replace(/[^0-9]/g, '').slice(0, 5);
 
 export const LeadInput = z.object({
-  source: z.enum(['samhsa', 'gmaps', 'psychtoday']),
+  source: z.enum(['samhsa', 'gmaps', 'psychtoday', 'quick-add']),
   name: z.string(),
   street: z.string().nullable(),
   city: z.string(),
@@ -61,6 +61,9 @@ export const LeadInput = z.object({
   googleReviews: z.number().int().nullable(),
   services: z.array(z.string()),
   sourceMeta: z.record(z.string(), z.unknown()),
+  contactName: z.string().nullable().optional(),
+  contactRole: z.string().nullable().optional(),
+  contactEmail: z.string().nullable().optional(),
 });
 
 export const normalizeName = (name: string): string => {
@@ -95,6 +98,9 @@ const toLeadRow = (input: z.infer<typeof LeadInput>) => ({
   googleReviews: input.googleReviews,
   services: input.services,
   sourceMeta: input.sourceMeta as Prisma.InputJsonValue,
+  contactName: input.contactName ?? null,
+  contactRole: input.contactRole ?? null,
+  contactEmail: input.contactEmail ?? null,
 });
 
 export const upsertLead = async (input: z.infer<typeof LeadInput>): Promise<Lead> => {

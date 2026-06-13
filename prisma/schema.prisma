@@ -34,11 +34,26 @@ model Lead {
   priorWrittenConsent   Boolean   @default(false)
   priorWrittenConsentAt DateTime?
   enrichment       Enrichment?
+  contacts         Contact[]
   drafts           Draft[]
+  contactName      String?
+  contactRole      String?
+  contactEmail     String?
   createdAt        DateTime @default(now())
 
   @@unique([nameNormalized, addressHash])
   @@index([state, city])
+}
+
+model Contact {
+  id        String   @id @default(cuid())
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  name      String
+  role      String
+  email     String?
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
 }
 
 model Enrichment {
