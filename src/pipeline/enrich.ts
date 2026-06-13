@@ -108,7 +108,7 @@ export const enrichLead = async (leadId: string): Promise<void> => {
       evidenceQuote = null;
     }
   }
-  await prisma.enrichment.create({ data: {
+  const enrichment = await prisma.enrichment.create({ data: {
     leadId,
     ownerName,
     ownerTitle,
@@ -120,4 +120,36 @@ export const enrichLead = async (leadId: string): Promise<void> => {
     legitscriptStatus: analyzed.legitscript_mentioned ? 'mentioned' : null,
     evidenceQuote,
   } });
+
+  const existing = await prisma.contact.findFirst({
+    where: { leadId, isPrimary: true },
+  });
+  const contact = existing === null
+    ? await prisma.contact.create({
+      data: {
+        leadId,
+        name: enrichment.ownerName ?? lead.name,
+        role: enrichment.ownerTitle ?? 'Partnerships',
+        email: enrichment.ownerEmail ?? null,
+        linkedinUrl: enrichment.ownerLinkedIn ?? null,
+        isPrimary: true,
+      },
+    })
+    : await prisma.contact.update({
+      where: { id: existing.id },
+      data: {
+        name: enrichment.ownerName ?? existing.name,
+        role: enrichment.ownerTitle ?? existing.role,
+        email: enrichment.ownerEmail ?? existing.email,
+        linkedinUrl: enrichment.ownerLinkedIn ?? existing.linkedinUrl,
+      },
+    });
+  await prisma.auditLog.create({
+    data: {
+      action: 'enrich.contactSynced',
+      entity: 'contact',
+      entityId: contact.id,
+      meta: { leadId, ownerNamePresent: Boolean(enrichment.ownerName) },
+    },
+  });
 };
