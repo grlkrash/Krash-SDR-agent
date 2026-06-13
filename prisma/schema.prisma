@@ -34,6 +34,7 @@ model Lead {
   priorWrittenConsent   Boolean   @default(false)
   priorWrittenConsentAt DateTime?
   enrichment       Enrichment?
+  contacts         Contact[]
   drafts           Draft[]
   createdAt        DateTime @default(now())
 
@@ -56,6 +57,21 @@ model Enrichment {
   legitscriptStatus String?
   evidenceQuote     String?
   enrichedAt        DateTime @default(now())
+}
+
+model Contact {
+  id          String   @id @default(cuid())
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  name        String
+  role        String
+  email       String?
+  linkedinUrl String?
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([leadId, isPrimary])
 }
 
 model Draft {
