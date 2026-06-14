@@ -7,7 +7,7 @@ Pre-deploy checklist — you have **not** deployed yet. Follow these steps when 
 | Service | Purpose | Start command | Schedule |
 | --- | --- | --- | --- |
 | **ssa-web** | Express API + `/queue` | `npm run start:web` | always on |
-| **ssa-cron** | All PRD §9.1 jobs via tick dispatcher | `npm run start:cron` | `*/5 * * * *` (UTC) |
+| **ssa-cron** | All PRD §9.1 jobs via tick dispatcher | `npm run start:tick` | `*/5 * * * *` (UTC) |
 | **Postgres** | pgvector DB | — | Railway plugin |
 
 One cron service is cheaper than 14 separate Railway services. `src/scripts/cronTick.ts` runs every 5 minutes and fires jobs whose Eastern-time schedule matches the current tick.
@@ -61,7 +61,7 @@ On **ssa-cron** only:
 That file sets:
 
 ```toml
-startCommand = "npm run start:cron"
+startCommand = "npm run start:tick"
 cronSchedule = "*/5 * * * *"
 ```
 

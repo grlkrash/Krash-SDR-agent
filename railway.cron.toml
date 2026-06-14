@@ -6,6 +6,6 @@ builder = "NIXPACKS"
 buildCommand = "npx prisma generate && npm run build && npx playwright install --with-deps chromium"
 
 [deploy]
-startCommand = "npm run start:cron"
+startCommand = "npm run start:tick"
 cronSchedule = "*/5 * * * *"
 restartPolicyType = "ON_FAILURE"

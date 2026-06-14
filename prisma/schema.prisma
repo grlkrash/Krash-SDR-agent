@@ -128,3 +128,18 @@ model AuditLog {
   meta      Json     @default("{}")
   createdAt DateTime @default(now())
 }
+
+model Job {
+  id          String   @id @default(cuid())
+  type        String
+  params      Json     @default("{}")
+  status      String   @default("pending") // pending | running | complete | failed
+  result      Json?
+  attempts    Int      @default(0)
+  scheduledAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([type])
+}
