@@ -1,7 +1,5 @@
 import 'dotenv/config';
 import express from 'express';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@prisma/client';
 import { queueRouter } from './ui/queue.js';
 import { manualVmQueueRouter } from './ui/manualVmQueue.js';
 import { renewalsCallRouter } from './ui/renewalsCall.js';
@@ -11,12 +9,14 @@ import { followUpQueueRouter } from './ui/followUpQueue.js';
 import { prepBriefRouter } from './ui/prepBrief.js';
 import { copilotRouter } from './ui/copilot.js';
 import { intelRouter } from './ui/intel.js';
+import { sponsorDiscoveryRouter } from './ui/sponsorDiscovery.js';
 import { unsubscribeRouter } from './routes/unsubscribe.js';
 import { openTrackRouter } from './routes/openTrack.js';
 import { phoneConsentRouter } from './routes/phoneConsent.js';
 import { twilioRouter } from './routes/twilioHooks.js';
 import { hs, hsRetry } from './shared/hubspot.js';
 import { claude } from './shared/claude.js';
+import { prisma } from './shared/prismaClient.js';
 
 const VERSION = '1.2.0';
 const DEFAULT_PORT = 3000;
@@ -25,10 +25,6 @@ const CRON_LOOKBACK = 50;
 const HUBSPOT_PROBE_LIMIT = 1;
 const CLAUDE_PROBE_MAX_TOKENS = 5;
 const QUEUE_DEPTH_FAILED = -1;
-
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' }),
-});
 
 const app = express();
 
@@ -130,6 +126,7 @@ app.use('/', followUpQueueRouter);
 app.use('/', prepBriefRouter);
 app.use('/', copilotRouter);
 app.use('/', intelRouter);
+app.use('/', sponsorDiscoveryRouter);
 app.use('/', unsubscribeRouter);
 app.use('/', phoneConsentRouter);
 app.use('/', twilioRouter);
