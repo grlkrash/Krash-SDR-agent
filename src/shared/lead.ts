@@ -49,7 +49,7 @@ const normalizeZip = (zip: string | null | undefined): string =>
   (zip ?? '').replace(/[^0-9]/g, '').slice(0, 5);
 
 export const LeadInput = z.object({
-  source: z.enum(['samhsa', 'gmaps', 'psychtoday']),
+  source: z.enum(['samhsa', 'gmaps', 'psychtoday', 'sponsor-discovery']),
   name: z.string(),
   street: z.string().nullable(),
   city: z.string(),
